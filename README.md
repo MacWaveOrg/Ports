@@ -40,3 +40,4 @@
 | 包 | 上游 | 上游最后一版带 macOS 产物 |
 | --- | --- | --- |
 | `choma` | [opa334/ChOma](https://github.com/opa334/ChOma) | 从不发布二进制，只能自建 |
+| `aria2c` | [aria2/aria2](https://github.com/aria2/aria2) | 1.35.0（2022 年，只有 x86_64；1.36/1.37 只剩 Windows 与源码） |
