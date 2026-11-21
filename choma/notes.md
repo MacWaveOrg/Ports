@@ -6,8 +6,12 @@
 
 | 架构 | lipo -archs | 大小 | min_os | sha256 |
 | --- | --- | --- | --- | --- |
-| arm64 | arm64 | 134,296 B | 11.0 | `090031020461775f3ff818681e838ca44c7ab535925b605e6bafca6da70abbf8` |
-| amd64 | x86_64 | 116,408 B | 11.0 | `4e4b2e94ff42109f53c403facfcbaecc55cd2313135fe25a26e47bad220762d6` |
+| arm64 | arm64 | 134,296 B | 11.0（`LC_BUILD_VERSION`） | `090031020461775f3ff818681e838ca44c7ab535925b605e6bafca6da70abbf8` |
+| amd64 | x86_64 | 116,408 B | 10.13（`LC_VERSION_MIN_MACOSX`，老工具链写法） | `4e4b2e94ff42109f53c403facfcbaecc55cd2313135fe25a26e47bad220762d6` |
+
+两个架构的 `min_os` **不一样**：amd64 那份是 2026-08 用旧工具链编的，写的是
+`LC_VERSION_MIN_MACOSX 10.13`；arm64 那份是 `LC_BUILD_VERSION 11.0`。索引记录
+照实测值写，别统一成一个数。
 
 ## 索引记录
 
@@ -18,8 +22,29 @@ sha256: "<上表>"
 file: "ChOma_<架构>"      ← 裸可执行文件，没有扩展名，所以 payload_filename 拼出
                             choma@1.0-macwaveteam2.<架构>
 url: "https://github.com/MacWaveOrg/Ports/releases/download/choma/ChOma_<架构>"
-min_os: "11.0"
+deps: "openssl@3.0.15"    ← 2026-11-21 补的，之前漏了（见下）
+min_os: "11.0"            ← arm64；amd64 是 "10.13"
 ```
+
+### `deps` 那一行是后补的，漏了会坏
+
+产物**动态**链着 libcrypto：
+
+```
+arm64: /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib     ← 构建机的 Homebrew
+amd64: /opt/local/libexec/openssl3/lib/libcrypto.3.dylib     ← MacPorts 的路径
+```
+
+原来记录里没有 `deps:`，于是 `wave install choma` 不会装 openssl，
+安装时的路径改写（`transfer.sh`，按 basename 在 deps 树里找）也没有目标可指 ——
+没装 Homebrew 的机器上直接 `dyld: Library not loaded`。
+
+补上 `deps: "openssl@3.0.15"` 之后实测：openssl 被自动装进
+`~/.local/macwave/deps/openssl/openssl@3.0.15/`，`otool -L` 里的引用被改写成
+`…/deps/openssl/openssl@3.0.15/lib/libcrypto.3.dylib`，`choma` 跑通。
+
+**以后重编时建议静态链 libcrypto**，那样就不必再声明 openssl —— 代价是 openssl
+的安全更新要跟着重编一次。这条写在这里，供下次决定。
 
 ## 当时跑过的验证
 
