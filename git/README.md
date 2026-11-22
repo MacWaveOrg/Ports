@@ -67,7 +67,9 @@ $ links/git --exec-path
 bash git/build.sh out
 ```
 
-两个架构分别编、每个 Mach-O 都 ad-hoc 签名、源码 sha256 校验、补丁自动应用。
+两个架构分别编、每个 Mach-O 都 ad-hoc 签名（`sign_and_dedupe`：签名后按 LC_UUID
+把 git-core 里的硬链接接回去，否则整棵树会从 25 MB 涨到 594 MB）、
+源码 sha256 校验、补丁自动应用。
 产物尺寸与 sha256 见 [notes.md](./notes.md)。
 
 验证（在 MacWave 仓库里）：

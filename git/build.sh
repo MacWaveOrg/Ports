@@ -14,7 +14,9 @@
 #   2. 两个架构分别编，不要 universal：索引是「每架构一个产物」；
 #   3. 编译时把 Homebrew / MacPorts 的默认搜索路径关掉（NO_DARWIN_PORTS /
 #      NO_HOMEBREW），否则 git 会链到 /opt/local/lib/libz 这类构建机路径；
-#   4. 编完给每个 Mach-O ad-hoc 签名（Apple 芯片拒绝执行未签名的 arm64）。
+#   4. 编完给每个 Mach-O ad-hoc 签名（Apple 芯片拒绝执行未签名的 arm64），但
+#      签名会断开 git-core 里那些硬链接，所以签完要按 LC_UUID 重新接回去 ——
+#      否则整棵树会从 25 MB 涨到 594 MB。见 sign_and_dedupe。
 #
 # 依赖面只留系统库：关掉 gettext / pcre2 / OpenSSL / Python / Rust，
 # TLS 交给系统 libcurl（Secure Transport）。otool -L 里只剩
@@ -77,6 +79,36 @@ MAKE_VARS=(
     CC=/usr/bin/clang
 )
 
+sign_and_dedupe() {
+    # 整树里的每个 Mach-O 都要签，不只是 bin/git。麻烦的是 libexec/git-core 下
+    # 那 140 个 git-XXX 本来是**同一份** bin/git 的硬链接（LC_UUID 相同），
+    # 而 codesign 会重写文件、顺带断掉硬链接 —— 老实一个个签，包就从 25 MB 变成
+    # 594 MB（140 份 3.9 MB 拷贝）。所以按 LC_UUID 分组：每组只签第一个，
+    # 其余名字重新 ln 回去，内容与签名都一致。
+    local stage="$1"
+    local plan; plan="$(mktemp "${TMPDIR:-/tmp}/git-sign.XXXXXX")"
+
+    while IFS= read -r file; do
+        file "$file" | grep -q "Mach-O" || continue
+        printf '%s\t%s\n' \
+            "$(dwarfdump --uuid "$file" 2>/dev/null | awk 'NR==1 {print $2}')" \
+            "$file"
+    done < <(find "$stage" -type f) | sort > "$plan"
+
+    local last_uuid="" last_file=""
+    while IFS=$'\t' read -r uuid file; do
+        if [[ -n "$uuid" && "$uuid" == "$last_uuid" ]]; then
+            rm -f "$file"
+            ln "$last_file" "$file"
+        else
+            codesign --force --sign - "$file" >/dev/null 2>&1
+            last_uuid="$uuid" last_file="$file"
+        fi
+    done < "$plan"
+
+    rm -f "$plan"
+}
+
 build_one() {
     local arch="$1" clang_arch="$2"
     local stage="$WORK/stage-$arch"
@@ -92,13 +124,7 @@ build_one() {
             CFLAGS="$cflags" LDFLAGS="$cflags" prefix="$stage" install >/dev/null
     )
 
-    # 整树里每个 Mach-O 都要签，不只是 bin/git：libexec 下的 remote helper
-    # 是各自独立的可执行文件，漏签在 Apple 芯片上会被直接拒绝。
-    while IFS= read -r file; do
-        if file "$file" | grep -q "Mach-O"; then
-            codesign --force --sign - "$file" >/dev/null 2>&1
-        fi
-    done < <(find "$stage" -type f)
+    sign_and_dedupe "$stage"
 
     mkdir -p "$OUT"
     tar -cJf "$OUT/git-${VERSION}-${arch}.tar.xz" -C "$stage" bin libexec share

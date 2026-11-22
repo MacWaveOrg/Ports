@@ -6,17 +6,30 @@
 
 | 架构 | 归档 | 大小 | `bin/git` sha256 | min_os |
 | --- | --- | --- | --- | --- |
-| arm64 | `git-2.56.1-arm64.tar.xz` | 7,078,180 B | `ffa9629af71affdb6b6514cd5f4f5b2ac3121636806207a624bfb23a99cd38b9` | 12.0 |
-| amd64 | `git-2.56.1-amd64.tar.xz` | 7,800,808 B | `f53773d624bc050d51a20af467e26e05a8b7925184e3cc3333fcc8fab256326f` | 12.0 |
+| arm64 | `git-2.56.1-arm64.tar.xz` | 3,517,420 B | `ffa9629af71affdb6b6514cd5f4f5b2ac3121636806207a624bfb23a99cd38b9` | 12.0 |
+| amd64 | `git-2.56.1-amd64.tar.xz` | 3,865,764 B | `f53773d624bc050d51a20af467e26e05a8b7925184e3cc3333fcc8fab256326f` | 12.0 |
 
 归档本身的 sha256（索引记录里写这两个）：
 
 ```
-2ff8bdc17568b97d9b3ab087ae55d2ae643932b1b64eb81ed5df99f367d77773  git-2.56.1-arm64.tar.xz
-ecf8a4d90ee2c50e6fa52098ff9381dbc75bc5d592592dae3fb0ff00a2db3ad0  git-2.56.1-amd64.tar.xz
+85c902706948a50f84c055d100c6da4c3942dda6b193ff1f246a87f0d7aac29c  git-2.56.1-arm64.tar.xz
+3f90d7ae2d20dcf38cfeb9c3a7927ad3723400460b5158b3f68fb2dbf81d42b4  git-2.56.1-amd64.tar.xz
 ```
 
 注意 `bin/git` 的 sha256 与归档的不同：索引要写**归档**的哈希（客户端校验的是下载到的那个文件）。
+
+## 签名的坑：594 MB 从哪来（2026-11-22 修正）
+
+`libexec/git-core` 下那 140 个 `git-XXX` 本来是同一份二进制的**硬链接**（LC_UUID 相同），
+而 `codesign` 会重写文件、按文件名生成 ad-hoc identifier，于是每个名字都被签成独立一份：
+
+```
+逐个签（错）   594 MB，解包后 140 份 3.9 MB 拷贝
+按 UUID 签名  25 MB，140 个名字仍是硬链接
+```
+
+`build.sh` 里的 `sign_and_dedupe` 按 LC_UUID 分组，每组只签第一个，其余 `ln` 回去。
+先发出去的那版（`2ff8bdc1…` / `ecf8a4d9…`）就是逐个签的，已用瘦身版替换。
 
 ## selfbuilt_check.sh
 
