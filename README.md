@@ -33,7 +33,30 @@
     README.md      这个包为什么自建、上游从哪一版起不发 macOS 产物
     build.sh       可复现的构建脚本（固定上游 tag、固定 configure 参数）
     notes.md       实测记录：架构、min_os、otool -L 的输出、跑过的命令
+
+scripts/
+    fetch.sh            统一取件口（见下）
+    relocate_stage.sh   打包前的重定位
+    selfbuilt_check.sh  上传前的闸门
 ```
+
+## 取件一律走 `scripts/fetch.sh`
+
+国内网络（校园网、家宽）常年把 `github.com` 本身掐掉，而 `api.github.com` /
+`codeload.github.com` 通常还是通的 —— 实测同一条链路 `github.com` 12 秒连不上，
+`api.github.com` 0.3 秒 200。所以 build.sh 里不要直接写 `curl`：
+
+```bash
+bash "$FETCH" "<url>" "<output>"
+```
+
+- `github.com/<owner>/<repo>/releases/download/<tag>/<file>` → 走 `gh release download`
+  （打 API，再重定向到 CDN，完全不碰 `github.com`）；`gh` 不可用时退回 curl。
+- 其他（kernel.org、codeload、上游自有域名）→ curl，带重试。
+- 需要 `git clone` 的上游，改成取 `https://codeload.github.com/<owner>/<repo>/tar.gz/...`
+  再解包，不要 clone。
+
+取件方式换了不影响可信度：每个 build.sh 都按 sha256 锁死上游产物，下错了直接失败。
 
 ## 上传前必跑：`scripts/selfbuilt_check.sh`
 

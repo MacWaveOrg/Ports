@@ -25,6 +25,7 @@ set -o pipefail
 
 TAG="${1:-release-1.37.0}"
 OUT="${2:-$PWD/out}"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="${TAG#release-}"
 
 RED_BOLD='\033[1;31m'
@@ -33,6 +34,10 @@ RESET='\033[0m'
 
 say() { printf '%b\n' "$*"; }
 die() { printf '%b\n' "${RED_BOLD}🌊 Error: $*${RESET}" >&2; exit 1; }
+FETCH="$HERE/../scripts/fetch.sh"
+[ -f "$FETCH" ] || die "fetch.sh not found: $FETCH"
+RELOCATE_SH="$HERE/../scripts/relocate_stage.sh"
+[ -f "$RELOCATE_SH" ] || die "relocate_stage.sh not found: $RELOCATE_SH"
 
 for tool in git make clang lipo codesign vtool curl; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found (install the Xcode command line tools)"
@@ -42,8 +47,8 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/aria2-build.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 say "${GREEN}🌊 Downloading aria2 ${VERSION}${RESET}"
-curl -fsSL -o "$WORK/aria2.tar.gz" \
-    "https://github.com/aria2/aria2/releases/download/${TAG}/aria2-${VERSION}.tar.gz"
+bash "$FETCH" \
+    "https://github.com/aria2/aria2/releases/download/${TAG}/aria2-${VERSION}.tar.gz" "$WORK/aria2.tar.gz"
 tar xzf "$WORK/aria2.tar.gz" -C "$WORK"
 SRC="$WORK/aria2-${VERSION}"
 [ -d "$SRC" ] || die "unpacked directory not found: $SRC"
@@ -71,14 +76,23 @@ build_one() {
             "$SRC/configure" --prefix="$dir/prefix" "${COMMON[@]}"
         else
             CC=clang CXX=clang++ \
-            CFLAGS="-arch x86_64 -O2" CXXFLAGS="-arch x86_64 -O2" LDFLAGS="-arch x86_64" \
+            CFLAGS="-arch x86_64 -O2" CXXFLAGS="-arch x86_64 -O2" LDFLAGS="-arch x86_64 -Wl,-headerpad_max_install_names" \
             "$SRC/configure" --host=x86_64-apple-darwin --prefix="$dir/prefix" "${COMMON[@]}"
         fi
         make -j"$(sysctl -n hw.ncpu)"
     )
 
+    # 单文件产物：客户端落到 bin/aria2c@<版本>/aria2c，stage 也摆成这样。
+    local stage="$dir/stage"
+    local pkg="$stage/bin/aria2c@${VERSION}"
+    mkdir -p "$pkg"
+    cp "$dir/src/aria2c" "$pkg/aria2c"
+
+    # 重定位必须在签名之前：install_name_tool 改写会作废已有签名。
+    bash "$RELOCATE_SH" "$stage"
+
     mkdir -p "$OUT"
-    cp "$dir/src/aria2c" "$OUT/aria2c-$tag"
+    cp "$pkg/aria2c" "$OUT/aria2c-$tag"
     codesign --force --sign - "$OUT/aria2c-$tag"
     lipo -archs "$OUT/aria2c-$tag"
 }
@@ -94,4 +108,4 @@ for file in "$OUT/aria2c-arm64" "$OUT/aria2c-x86_64"; do
 done
 say ""
 say "下一步：两个产物都过一遍 scripts/selfbuilt_check.sh（在 MacWave 仓库里），"
-say "        --arch arm64 / --arch amd64 --bin-name aria2c。"
+say "        --arch arm64 / --arch amd64。"

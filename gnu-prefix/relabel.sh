@@ -38,8 +38,13 @@ relabel_bare bash-arm64   gbash-arm64
 relabel_bare bash-x86_64  gbash-x86_64
 
 relabel_archive() { # 架构 → wget 的 conda 树改名后重打包
-    local arch="$1" dir="$OUT/wget-$arch"
-    [[ -d "$dir" ]] || die "missing $dir"
+    local arch="$1"
+    local dir="$OUT/wget-$arch"   # 分两行：同一行里 $arch 会在赋值前展开，set -u 直接报错
+    # gwget 来自 conda 归档，本仓库不构建它；没有就跳过，不要拦住 gtar/gpatch/gbash。
+    if [[ ! -d "$dir" ]]; then
+        say "  skip gwget-$arch (no $dir)"
+        return 0
+    fi
     mv "$dir/bin/wget" "$dir/bin/gwget"
     grep -rl "bin/wget" "$dir/info" 2>/dev/null | while read -r f; do
         perl -pi -e 's{bin/wget\b}{bin/gwget}g' "$f"
@@ -54,6 +59,8 @@ relabel_archive amd64
 
 say ""
 say "校验（应全部等于原版版本号）"
-for f in "$OUT"/gtar-arm64 "$OUT"/gpatch-arm64 "$OUT"/gbash-arm64; do
+for f in "$OUT"/gtar-arm64 "$OUT"/gpatch-arm64 "$OUT"/gbash-arm64 \
+         "$OUT"/gtar-x86_64 "$OUT"/gpatch-x86_64 "$OUT"/gbash-x86_64; do
+    [[ -f "$f" ]] || continue
     printf '  %-14s %s\n' "$(basename "$f")" "$("$f" --version | head -1)"
 done

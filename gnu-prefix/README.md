@@ -35,6 +35,8 @@ g 前缀让两者**并存**：`tar`（系统）+ `gtar`（GNU）、`bash`（3.2�
 bash gnu-prefix/relabel.sh out
 ```
 
+`gwget` 的来源（conda 归档）本仓库不构建，缺件时脚本跳过它，不影响 `gtar`/`gpatch`/`gbash`。
+
 `gtar`/`gpatch`/`gbash` 是裸二进制，改名后重新 ad-hoc 签名即可；`gwget` 的产物是
 conda 归档，除了把 `bin/wget` 改成 `bin/gwget`，还要把 `info/` 里登记的路径一起改掉
 （否则 conda 的路径校验会对不上）。

@@ -18,3 +18,15 @@ runtime/            ← 语法高亮、grammars（.so）、themes
 
 `hx` 本体 min_os 11.0，但 `runtime/grammars/*.so` 是 14.5，索引里按整包最大值写 **14.5**。
 hx 通过自身可执行文件位置找 `runtime/`，经 `links/hx` 软链启动正常（实测 `hx --version`）。
+
+## 2026-11-24 重建（4.6 重定位）
+
+`stage` 改为运行时布局 `bin/<名称>@<版本>/`，打包前跑 `scripts/relocate_stage.sh`，
+顺序为「编 → 重定位 → 签名 → 打包」。上面的哈希表已过期，以索引为准：
+
+```
+fe4425d5e29a9e8431137f9f8fb5cbe35271edfea49daf3945a81dd503aee938  arm64  (min_os 14.5)
+32fda8c36a65619cc821eb5048f86c9f995ffc0dcaa568ff6611d0b34969a250  amd64  (min_os 14.5)
+```
+
+改写了 245 个 `LC_ID_DYLIB`（`runtime/grammars/*.so` 的 id 原是 `/Users/runner/work/...`）。另把 `runtime/` 移进 `bin/`——helix 只找「可执行文件所在目录/runtime」。

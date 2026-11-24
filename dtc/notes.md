@@ -16,3 +16,15 @@
 ## selfbuilt_check.sh
 
 两个架构都全绿（Mach-O、架构、签名、min_os 11.0、无外部依赖、实跑 `--version`）。
+
+## 2026-11-24 重建（4.6 重定位）
+
+`stage` 改为运行时布局 `bin/<名称>@<版本>/`，打包前跑 `scripts/relocate_stage.sh`，
+顺序为「编 → 重定位 → 签名 → 打包」。上面的哈希表已过期，以索引为准：
+
+```
+bd2a03d64d4459a9d9d44dc6f8e9a9e9a04027ba8e421c9b92bf054ce8c4aaca  arm64  (min_os 11.0)
+612087bd213df2b3573925f88eb1937dfe11c957ef7a6c01f1f3aafc51c317ba  amd64  (min_os 11.0)
+```
+
+libfdt 的裸 soname `libfdt.dylib.1` 指向 `lib/` 软链，先 `install_name_tool` 改成真文件绝对路径，再重定位成 `@loader_path/../lib/libfdt.dylib.1.7.2`。LDFLAGS 加了 `-headerpad_max_install_names`。

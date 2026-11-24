@@ -45,21 +45,21 @@ RESET='\033[0m'
 
 say() { printf '%b\n' "$*"; }
 die() { printf '%b\n' "${RED_BOLD}🌊 Error: $*${RESET}" >&2; exit 1; }
+FETCH="$HERE/../scripts/fetch.sh"
+[ -f "$FETCH" ] || die "fetch.sh not found: $FETCH"
+RELOCATE_SH="$HERE/../scripts/relocate_stage.sh"
+[ -f "$RELOCATE_SH" ] || die "relocate_stage.sh not found: $RELOCATE_SH"
 
 for tool in curl make clang codesign lipo patch tar python3; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found (install the Xcode command line tools)"
 done
 
-# relocate_rpath.py 只有一份实现，在 MacWave 仓库里 —— 不要在 Ports 里抄一份。
-# 需要换位置就用 MACWAVE_RELOCATE 指过去。
-RELOCATE="${MACWAVE_RELOCATE:-$(cd "$HERE/../../MacWave" 2>/dev/null && pwd || true)/scripts/relocate_rpath.py}"
-[ -f "$RELOCATE" ] || die "relocate_rpath.py not found: $RELOCATE (set MACWAVE_RELOCATE)"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/git-build.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 say "${GREEN}🌊 Downloading git ${VERSION}${RESET}"
-curl -fsSL -o "$WORK/git.tar.xz" "$SRC_URL"
+bash "$FETCH" "$SRC_URL" "$WORK/git.tar.xz"
 echo "${SRC_SHA256}  $WORK/git.tar.xz" | shasum -a 256 -c - >/dev/null \
     || die "source tarball does not match the published sha256"
 tar -xJf "$WORK/git.tar.xz" -C "$WORK"
@@ -117,21 +117,6 @@ sign_and_dedupe() {
     rm -f "$plan"
 }
 
-relocate() {
-    # 把整树里的非系统引用改成 @loader_path/...，保证装到任意 base_dir 都成立。
-    # 改之前先 --check：本来就干净（现在 git 只链系统库）就直接跳过，不做无谓改写。
-    local stage="$1"
-
-    say "${GREEN}🌊 Checking position independence${RESET}"
-    if python3 "$RELOCATE" "$stage" --check; then
-        return 0
-    fi
-
-    say "${GREEN}🌊 Relocating absolute references${RESET}"
-    python3 "$RELOCATE" "$stage"
-    python3 "$RELOCATE" "$stage" --check
-}
-
 build_one() {
     local arch="$1" clang_arch="$2"
     # stage 摆成**运行时布局**：客户端把整树落到 <base>/bin/<名称>@<版本>/，
@@ -155,7 +140,7 @@ build_one() {
             CFLAGS="$cflags" LDFLAGS="$ldflags" prefix="$tree" install >/dev/null
     )
 
-    relocate "$stage"
+    bash "$RELOCATE_SH" "$stage"
     sign_and_dedupe "$tree"
 
     mkdir -p "$OUT"

@@ -54,3 +54,15 @@ $ otool -L choma                # 只有 /usr/lib/*，没有第三方 dylib
 ```
 
 （库链接是静态进可执行文件的，所以 `otool -L` 干净。）
+
+## 2026-11-24 重建（4.6 重定位）
+
+`stage` 改为运行时布局 `bin/<名称>@<版本>/`，打包前跑 `scripts/relocate_stage.sh`，
+顺序为「编 → 重定位 → 签名 → 打包」。上面的哈希表已过期，以索引为准：
+
+```
+f3244c2d6a2bdbcb675f118ee7c243219671b878dcb9f65c535654aec8a1a448  arm64  (min_os 11.0)
+7815cc8dc93448bea9b4097c59964b713b16527b7ca1266ef0d68d4d75fbf726  amd64  (min_os 10.13)
+```
+
+改为钉 commit SHA（上游没有 tag），取件走 codeload/`gh api`。libcrypto 静态链入，产物只依赖 CoreFoundation + libSystem，索引里的 `deps: openssl@3.0.15` 已删。

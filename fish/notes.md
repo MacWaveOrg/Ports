@@ -36,3 +36,15 @@ etc/fish/config.fish
 ```
 
 `fish_indent` / `fish_key_reader` 上游就是瘦二进制，脚本里按 `lipo -archs` 判断后再决定 thin 还是直接拷。
+
+## 2026-11-24 重建（4.6 重定位）
+
+`stage` 改为运行时布局 `bin/<名称>@<版本>/`，打包前跑 `scripts/relocate_stage.sh`，
+顺序为「编 → 重定位 → 签名 → 打包」。上面的哈希表已过期，以索引为准：
+
+```
+f0d9451c94bf3afcd2f49bf177c949ddb87bf72f394245cd3b2c0d9f2a553d45  arm64  (min_os 11.0)
+957302014c6a9a0fb67a8e54c390cb309a30193b0cdea147eeb7628c1aa935a0  amd64  (min_os 10.12)
+```
+
+`--check` 判定已位置无关。amd64 不再打包 `fish_indent`/`fish_key_reader`：上游 .app 里这两个只有 arm64。

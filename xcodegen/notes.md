@@ -36,3 +36,13 @@ $ diff direct.pbxproj link.pbxproj
 ```
 
 未打补丁的官方产物在同一比对里差 125 行（缺 base/config/platform 默认设置）。
+
+## 2026-11-24 重建（4.6 重定位）
+
+`stage` 改为运行时布局 `bin/<名称>@<版本>/`，打包前跑 `scripts/relocate_stage.sh`，
+顺序为「编 → 重定位 → 签名 → 打包」。上面的哈希表已过期，以索引为准：
+
+```
+fb6ce56d7542c4d59b20de0dcfcdd7bf0a0d0edc90cfff67037157d72c4a3c2d  arm64  (min_os 14.0)
+211156aebc3b0e624eff1a3547e9f0caff99df94c7283b8241e22afe450f06dd  amd64  (min_os 14.0)
+```

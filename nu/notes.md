@@ -17,3 +17,13 @@ bin/nu_plugin_*     ← 9 个插件，安装时每个都链一条 links/<名字>
 ```
 
 min_os：arm64 11.0、amd64 10.12。`nu` 自包含，不依赖树外数据。
+
+## 2026-11-24 重建（4.6 重定位）
+
+`stage` 改为运行时布局 `bin/<名称>@<版本>/`，打包前跑 `scripts/relocate_stage.sh`，
+顺序为「编 → 重定位 → 签名 → 打包」。上面的哈希表已过期，以索引为准：
+
+```
+f8f26fb36324d12520c6d456e0dbbb97cb6aecaa4dcda3f8bb1f35c735fef9b8  arm64  (min_os 11.0)
+0469cef8001128d03fb6a74666c77a29f2614d0396c24c1375cf7f0807ee1841  amd64  (min_os 10.12)
+```

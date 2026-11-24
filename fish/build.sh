@@ -20,6 +20,7 @@ set -u
 set -o pipefail
 
 VERSION="4.9.3"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC_SHA256="3619fa92d540ed0dff4816594429290550d21b92226e0523457e5f0242c5e9a8"
 SRC_URL="https://github.com/fish-shell/fish-shell/releases/download/${VERSION}/fish-${VERSION}.app.zip"
 
@@ -30,6 +31,10 @@ RED_BOLD='\033[1;31m'
 RESET='\033[0m'
 say() { printf '%b\n' "$*"; }
 die() { printf '%b\n' "${RED_BOLD}🌊 Error: $*${RESET}" >&2; exit 1; }
+FETCH="$HERE/../scripts/fetch.sh"
+[ -f "$FETCH" ] || die "fetch.sh not found: $FETCH"
+RELOCATE_SH="$HERE/../scripts/relocate_stage.sh"
+[ -f "$RELOCATE_SH" ] || die "relocate_stage.sh not found: $RELOCATE_SH"
 
 for tool in curl unzip lipo codesign tar shasum; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found"
@@ -38,8 +43,9 @@ done
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/fish-repack.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
+
 say "${GREEN}🌊 Downloading fish ${VERSION}${RESET}"
-curl -fsSL -o "$WORK/fish.app.zip" "$SRC_URL"
+bash "$FETCH" "$SRC_URL" "$WORK/fish.app.zip"
 echo "$SRC_SHA256  $WORK/fish.app.zip" | shasum -a 256 -c - >/dev/null \
     || die "upstream app bundle does not match the pinned sha256"
 unzip -qo "$WORK/fish.app.zip" -d "$WORK/app"
@@ -48,25 +54,40 @@ PREFIX="$WORK/app/fish-${VERSION}.app/Contents/Resources/base/usr/local"
 
 build_one() {
     local arch="$1" carm="$2"
+    # stage 必须是运行时布局：客户端把整树落到 bin/<名称>@<版本>/，所以这里就摆成
+    # <stage>/bin/fish@<版本>/，relocate 才能按最终位置算出正确的相对路径。
     local stage="$WORK/stage-$arch"
-    mkdir -p "$stage/bin"
+    local tree="$stage/bin/fish@${VERSION}"
+    mkdir -p "$tree/bin"
 
     say "${GREEN}🌊 Repacking ${arch}${RESET}"
-    local name
+    # 上游 .app 里只有 fish 本体是 universal；fish_indent / fish_key_reader 只编了
+    # arm64。所以不能无脑拷：amd64 包里塞一个 arm64 二进制，Intel 机器上一调就是
+    # "Bad CPU type"。没有目标架构的直接跳过，并把它说出来。
+    local name archs
     for name in fish fish_indent fish_key_reader; do
-        # 只有 fish 本体是 universal，fish_indent / fish_key_reader 本来就是瘦的
-        if lipo -archs "$PREFIX/bin/$name" | grep -q " "; then
-            lipo -thin "$carm" "$PREFIX/bin/$name" -output "$stage/bin/$name"
-        else
-            cp "$PREFIX/bin/$name" "$stage/bin/$name"
+        archs="$(lipo -archs "$PREFIX/bin/$name")"
+        if ! printf '%s\n' "$archs" | tr ' ' '\n' | grep -qx "$carm"; then
+            say "🌊   skipping bin/$name: upstream ships it ${archs}-only"
+            continue
         fi
-        codesign --force --sign - "$stage/bin/$name" >/dev/null 2>&1
+        case "$archs" in
+            *" "*) lipo -thin "$carm" "$PREFIX/bin/$name" -output "$tree/bin/$name" ;;
+            *)     cp "$PREFIX/bin/$name" "$tree/bin/$name" ;;
+        esac
     done
-    cp -R "$PREFIX/share" "$stage/"
-    cp -R "$PREFIX/etc" "$stage/"
+    cp -R "$PREFIX/share" "$tree/"
+    cp -R "$PREFIX/etc" "$tree/"
+
+    # 重定位必须在签名之前：install_name_tool 改写会作废已有签名。
+    bash "$RELOCATE_SH" "$stage"
+
+    while IFS= read -r file; do
+        file "$file" | grep -q Mach-O && codesign --force --sign - "$file" >/dev/null 2>&1
+    done < <(find "$tree" -type f)
 
     mkdir -p "$OUT"
-    tar -cJf "$OUT/fish-${VERSION}-${arch}.tar.xz" -C "$stage" .
+    tar -cJf "$OUT/fish-${VERSION}-${arch}.tar.xz" -C "$tree" .
 }
 
 build_one arm64 arm64
@@ -80,5 +101,5 @@ for arch in arm64 amd64; do
         "$(shasum -a 256 "$f" | cut -d' ' -f1)"
 done
 say ""
-say "下一步：解包后 bash scripts/selfbuilt_check.sh x/bin/fish --arch arm64 --bin-name fish"
+say "下一步：bash scripts/selfbuilt_check.sh <归档> --arch arm64 --tree --main bin/fish"
 say "        索引记录写 install: \"tree\" 与 min_client_version: \"4.5.0\"（fish 依赖树内 share/fish）。"

@@ -30,24 +30,33 @@ RESET='\033[0m'
 
 say() { printf '%b\n' "$*"; }
 die() { printf '%b\n' "${RED_BOLD}🌊 Error: $*${RESET}" >&2; exit 1; }
+FETCH="$HERE/../scripts/fetch.sh"
+[ -f "$FETCH" ] || die "fetch.sh not found: $FETCH"
+RELOCATE_SH="$HERE/../scripts/relocate_stage.sh"
+[ -f "$RELOCATE_SH" ] || die "relocate_stage.sh not found: $RELOCATE_SH"
 
-for tool in git swift codesign tar; do
+for tool in swift codesign tar; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found (install Xcode)"
 done
+
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/xcodegen-build.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
 say "${GREEN}🌊 Fetching XcodeGen ${VERSION}${RESET}"
-git clone --depth 1 --branch "$VERSION" "$SRC_URL" "$WORK/src" >/dev/null 2>&1 \
-    || die "cannot clone $SRC_URL at $VERSION"
+# 走 codeload 而不是 git clone：github.com 在国内常年连不上，codeload 通。
+bash "$FETCH" "https://codeload.github.com/yonaskolb/XcodeGen/tar.gz/refs/tags/$VERSION" "$WORK/src.tar.gz"
+mkdir -p "$WORK/src"
+tar xzf "$WORK/src.tar.gz" -C "$WORK/src" --strip-components=1
 patch -d "$WORK/src" -p1 < "$HERE/presets-symlink.patch"
 
 # 上游 Package.swift 声明 platforms: [.macOS(.v14)]，所以产物本身就是 min_os 14.0，
 # 与官方 zip 一致，不要试图往低版本拉。
 build_one() {
     local arch="$1"
+    # stage 必须是运行时布局：客户端把整树落到 bin/<名称>@<版本>/。
     local stage="$WORK/stage-$arch"
+    local pkg="$stage/bin/xcodegen@${VERSION}"
 
     say "${GREEN}🌊 Building ${arch}${RESET}"
     (
@@ -59,14 +68,17 @@ build_one() {
             swift build -c release --product xcodegen --arch "$arch"
     )
 
-    mkdir -p "$stage/bin" "$stage/share"
-    cp "$WORK/src/.build/$arch-apple-macosx/release/xcodegen" "$stage/bin/"
-    cp -R "$WORK/src/SettingPresets" "$stage/share/xcodegen"
-    cp "$WORK/src/LICENSE" "$stage/" 2>/dev/null || true
-    codesign --force --sign - "$stage/bin/xcodegen" >/dev/null 2>&1
+    mkdir -p "$pkg/bin" "$pkg/share"
+    cp "$WORK/src/.build/$arch-apple-macosx/release/xcodegen" "$pkg/bin/"
+    cp -R "$WORK/src/SettingPresets" "$pkg/share/xcodegen"
+    cp "$WORK/src/LICENSE" "$pkg/" 2>/dev/null || true
+
+    # 重定位必须在签名之前：install_name_tool 改写会作废已有签名。
+    bash "$RELOCATE_SH" "$stage"
+    codesign --force --sign - "$pkg/bin/xcodegen" >/dev/null 2>&1
 
     mkdir -p "$OUT"
-    tar -cJf "$OUT/xcodegen-${VERSION}-${arch}.tar.xz" -C "$stage" bin share LICENSE
+    tar -cJf "$OUT/xcodegen-${VERSION}-${arch}.tar.xz" -C "$pkg" bin share LICENSE
 }
 
 build_one arm64
@@ -80,5 +92,5 @@ for arch in arm64 x86_64; do
         "$(shasum -a 256 "$file" | cut -d' ' -f1)"
 done
 say ""
-say "下一步：解包后 bash scripts/selfbuilt_check.sh dist/bin/xcodegen --arch arm64 --bin-name xcodegen"
+say "下一步：bash scripts/selfbuilt_check.sh <归档> --arch arm64 --tree --main bin/xcodegen"
 say "        索引记录写 install: \"tree\" 与 min_client_version: \"4.5.0\"。"

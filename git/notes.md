@@ -101,3 +101,15 @@ $ links/git@2.56.1 -C /tmp/c log --oneline -1
    `gitweb.cgi` 装到用户机器上跑不起来。都属于边角功能，主命令不受影响。
    之前一直没发现，是因为闸门只搜 `/Users/` 与 `/opt/local`，而 stage 在 `$TMPDIR`
    （`/var/folders/…`）下 —— 现在闸门已加上 `/var/folders/`。
+
+## 2026-11-24 重建（4.6 重定位）
+
+`stage` 改为运行时布局 `bin/<名称>@<版本>/`，打包前跑 `scripts/relocate_stage.sh`，
+顺序为「编 → 重定位 → 签名 → 打包」。上面的哈希表已过期，以索引为准：
+
+```
+5beda5b63fe29451273409348d7ccd41995748564711e6005492203c2aa7fafd  arm64  (min_os 12.0)
+33f4e446851f3757aaa9de29302bee29ebda1eba0240d8409b5dfe432f183557  amd64  (min_os 12.0)
+```
+
+`--check` 判定已位置无关（只链系统库），本步为空转、作为闸门存在。

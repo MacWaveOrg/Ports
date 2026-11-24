@@ -23,6 +23,10 @@ RED_BOLD='\033[1;31m'
 RESET='\033[0m'
 say() { printf '%b\n' "$*"; }
 die() { printf '%b\n' "${RED_BOLD}🌊 Error: $*${RESET}" >&2; exit 1; }
+FETCH="$HERE/../scripts/fetch.sh"
+[ -f "$FETCH" ] || die "fetch.sh not found: $FETCH"
+RELOCATE_SH="$HERE/../scripts/relocate_stage.sh"
+[ -f "$RELOCATE_SH" ] || die "relocate_stage.sh not found: $RELOCATE_SH"
 
 for tool in curl clang codesign tar shasum; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found"
@@ -31,15 +35,19 @@ done
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/nu-repack.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
+
 build_one() {
     local arch="$1" url="$2" sha="$3"
     local dir="$WORK/tree-$arch"
+    # stage 必须是运行时布局：客户端把整树落到 bin/<名称>@<版本>/，
+    # 所以这里就摆成 <stage>/bin/nu@<版本>/，relocate 才能算对相对路径。
     local stage="$dir/stage"
+    local tree="$stage/bin/nu@${VERSION}"
 
     say "${GREEN}🌊 Repacking ${arch}${RESET}"
-    mkdir -p "$dir/extract" "$stage/bin"
+    mkdir -p "$dir/extract" "$tree/bin"
     local archive="$WORK/$(basename "$url")"
-    curl -fsSL -o "$archive" "$url"
+    bash "$FETCH" "$url" "$archive"
     echo "$sha  $archive" | shasum -a 256 -c - >/dev/null \
         || die "upstream $arch artifact does not match the pinned sha256"
     case "$archive" in
@@ -54,19 +62,21 @@ build_one() {
         root="${entries[0]}"
     fi
 
-    mv "$root/nu" "$stage/bin/"
+    mv "$root/nu" "$tree/bin/"
     for plugin in "$root"/nu_plugin_*; do
-        if [[ -f "$plugin" ]]; then mv "$plugin" "$stage/bin/"; fi
+        if [[ -f "$plugin" ]]; then mv "$plugin" "$tree/bin/"; fi
     done
-    if [[ -f "$root/LICENSE" ]]; then cp "$root/LICENSE" "$stage/"; fi
+    if [[ -f "$root/LICENSE" ]]; then cp "$root/LICENSE" "$tree/"; fi
 
+
+    bash "$RELOCATE_SH" "$stage"
 
     while IFS= read -r file; do
         file "$file" | grep -q Mach-O && codesign --force --sign - "$file" >/dev/null 2>&1
-    done < <(find "$stage" -type f)
+    done < <(find "$tree" -type f)
 
     mkdir -p "$OUT"
-    tar -cJf "$OUT/nu-${VERSION}-${arch}.tar.xz" -C "$stage" .
+    tar -cJf "$OUT/nu-${VERSION}-${arch}.tar.xz" -C "$tree" .
 }
 
 build_one arm64 "https://github.com/nushell/nushell/releases/download/0.117.0/nu-0.117.0-aarch64-apple-darwin.tar.gz" "1d0e642ef3bff22113a82749a0fa24a0126f4fea0db46a5909e56e94a4b57527"
@@ -80,5 +90,5 @@ for arch in arm64 amd64; do
         "$(shasum -a 256 "$f" | cut -d' ' -f1)"
 done
 say ""
-say "下一步：解包后 bash scripts/selfbuilt_check.sh x/bin/nu --arch arm64 --bin-name nu"
+say "下一步：bash scripts/selfbuilt_check.sh <归档> --arch arm64 --tree --main bin/nu"
 say "        索引记录写 install: \"tree\" 与 min_client_version: \"4.5.0\"。"

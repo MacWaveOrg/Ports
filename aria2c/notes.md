@@ -72,3 +72,13 @@ $ bash scripts/selfbuilt_check.sh /tmp/aria2-out/aria2c-arm64 \
 闸门脚本第一次跑 amd64 时报过一条 `❌ 架构不符：产物是 x86_64（amd64），索引记录要的是 x86_64` ——
 那是把 `--arch x86_64` 当成了合法取值。**`--arch` 只认 `arm64` / `amd64`**，
 写 `x86_64` 会被当成另一个架构。
+
+## 2026-11-24 重建（4.6 重定位）
+
+`stage` 改为运行时布局 `bin/<名称>@<版本>/`，打包前跑 `scripts/relocate_stage.sh`，
+顺序为「编 → 重定位 → 签名 → 打包」。上面的哈希表已过期，以索引为准：
+
+```
+7f268fb97212624788f1da2a3a7efe7522264834e747b0da323a370628376e9f  arm64  (min_os 15.0)
+883f85bb4d4cda5f451a433532624914f4c10cd5e70a54e9c16f867075872f01  amd64  (min_os 15.0)
+```

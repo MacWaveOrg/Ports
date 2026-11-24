@@ -16,3 +16,13 @@
 ## selfbuilt_check.sh
 
 两个架构都全绿（Mach-O、架构、签名、min_os 11.0、无外部依赖、实跑 `--version`）。
+
+## 2026-11-24 重建（4.6 重定位）
+
+`stage` 改为运行时布局 `bin/<名称>@<版本>/`，打包前跑 `scripts/relocate_stage.sh`，
+顺序为「编 → 重定位 → 签名 → 打包」。上面的哈希表已过期，以索引为准：
+
+```
+16fc927ab48428d94726841b3cabb8f7b06c4394e2d6e8ff77d5fd064be8503a  arm64  (min_os 11.0)
+54a64c2a737a8fe2678368269e2e8a5f666c9eb02aad4a6122819a7bf74e568a  amd64  (min_os 11.0)
+```
