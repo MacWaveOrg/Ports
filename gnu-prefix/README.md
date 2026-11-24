@@ -38,3 +38,21 @@ bash gnu-prefix/relabel.sh out
 `gtar`/`gpatch`/`gbash` 是裸二进制，改名后重新 ad-hoc 签名即可；`gwget` 的产物是
 conda 归档，除了把 `bin/wget` 改成 `bin/gwget`，还要把 `info/` 里登记的路径一起改掉
 （否则 conda 的路径校验会对不上）。
+
+## gwget 的 CA 证书（已知限制，与改名无关）
+
+`gwget` 沿用 conda 的 `wget` 包，它编译时把证书路径指向 `$PREFIX/ssl/cacert.pem`，
+装到 MacWave 之后那个路径不存在，于是直接 `wget https://…` 会报：
+
+```
+ERROR: cannot verify …'s certificate
+```
+
+给一个系统根证书文件就能用（macOS 自带 `/etc/ssl/cert.pem`）：
+
+```bash
+SSL_CERT_FILE=/etc/ssl/cert.pem gwget -O file https://example.com/
+```
+
+这是 conda 打包方式带来的，原始 `wget` 包一样有；要彻底解决得让包带
+`ca-certificates` 依赖，或在 `bin/gwget` 外面包一层设好 `SSL_CERT_FILE` 的 wrapper。
