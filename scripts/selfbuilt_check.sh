@@ -121,12 +121,22 @@ for binary in "${MACHOS[@]}"; do
         esac
     fi
 
-    # 2. 签名
+    # 2. 单文件产物必须是可执行文件，不能是 dylib —— choma 就栽在这里：
+    # build.sh 抓错产物，发出去的包里是个动态库，用户那边根本没有这个命令。
+    if [[ -n "$SINGLE" ]]; then
+        kind="$(file -b "$binary")"
+        case "$kind" in
+            *executable*) ;;
+            *) problem "$rel: not an executable ($kind)" ;;
+        esac
+    fi
+
+    # 3. 签名
     if ! codesign --verify --verbose=0 "$binary" > /dev/null 2>&1; then
         problem "$rel: signature does not verify (re-run codesign --force --sign -)"
     fi
 
-    # 3. 引用里不许有绝对路径
+    # 4. 引用里不许有绝对路径
     while IFS= read -r reference; do
         [[ -n "$reference" ]] || continue
         [[ "$reference" =~ $SYSTEM_PREFIXES ]] && continue
@@ -141,7 +151,7 @@ for binary in "${MACHOS[@]}"; do
     fi
 done
 
-# 4. 整树包：文本文件里写死的构建目录
+# 5. 整树包：文本文件里写死的构建目录
 if [[ "$TREE" -eq 1 ]]; then
     # build.sh 的 stage 通常在 mktemp -d 的 $TMPDIR 下，macOS 上是
     # /var/folders/... —— 只搜 /Users 与 /opt/local 会漏掉这一类。

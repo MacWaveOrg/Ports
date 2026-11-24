@@ -61,8 +61,21 @@ $ otool -L choma                # 只有 /usr/lib/*，没有第三方 dylib
 顺序为「编 → 重定位 → 签名 → 打包」。上面的哈希表已过期，以索引为准：
 
 ```
-f3244c2d6a2bdbcb675f118ee7c243219671b878dcb9f65c535654aec8a1a448  arm64  (min_os 11.0)
-7815cc8dc93448bea9b4097c59964b713b16527b7ca1266ef0d68d4d75fbf726  amd64  (min_os 10.13)
+24084ac081259407ac9835aaeb8454c3ff23d64cddb382afef9908d6fc0f7d28  arm64  (min_os 11.0)
+34726335e0c87080ba94cf059bc16ed4bf73ed7d60933d44552e26fc7173f025  amd64  (min_os 10.13)
 ```
 
 改为钉 commit SHA（上游没有 tag），取件走 codeload/`gh api`。libcrypto 静态链入，产物只依赖 CoreFoundation + libSystem，索引里的 `deps: openssl@3.0.15` 已删。
+
+### 抓错产物：发出去的是 dylib 不是命令
+
+第一次重建时 `build.sh` 用 `find output -maxdepth 2 -perm -111 | head -1` 取产物，
+而脚本同时设了 `DISABLE_TESTS=1` —— CLI 在 `output/tests/choma_cli`，关掉测试就只剩
+`output/lib/libchoma.dylib`，于是包里塞进一个动态库，`bin_name: choma` 解析出来的
+`ChOma_<arch>` 根本不能执行（`file` 报 "dynamically linked shared library"）。
+
+修法：分两步 make —— 先 `DISABLE_TESTS=1` 编库，再 `DISABLE_TESTS=0 output/tests/choma_cli`
+只点那一个目标（整体开测试编不过：`tests/choma_sign` 用的是旧 API）。
+
+闸门也补了一条：单文件产物必须 `file` 认成 executable，否则报
+`not an executable`。这条检查在修之前跑过、确认能复现该缺陷。

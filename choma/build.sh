@@ -56,16 +56,25 @@ for arch in arm64 amd64; do
     triplet=$([[ "$arch" == arm64 ]] && echo arm64 || echo x86_64)
     say "🌊 编译 $arch（clang -arch $triplet）"
     make -C "$WORK/ChOma" clean >/dev/null 2>&1 || true
-    make -C "$WORK/ChOma" \
-        CFLAGS="-arch $triplet -Wall -Werror $(pkg-config --cflags libcrypto) -fPIC \
-                -Wno-pointer-to-int-cast -Wno-unused-command-line-argument \
-                -Wno-deprecated-declarations -framework CoreFoundation \
-                -mmacosx-version-min=10.13" \
-        LDFLAGS="-arch $triplet -Wl,-headerpad_max_install_names" \
-        DISABLE_SIGNING=0 DISABLE_TESTS=1 >/dev/null
 
-    built="$(find "$WORK/ChOma/output" -maxdepth 2 -type f -perm -111 | head -1)"
-    [[ -n "$built" ]] || die "$arch 编完没找到可执行文件"
+    # CLI 在 output/tests/choma_cli。DISABLE_TESTS=1 只编库，`find -perm -111` 能抓到
+    # 的就只剩 dylib —— 之前发出去的包里根本没有 choma 这个命令。但也不能整体开测试：
+    # tests/choma_sign 用的是旧 API，编不过。所以分两步，第二步只点那一个目标。
+    CF=(-arch "$triplet" -Wall $(pkg-config --cflags libcrypto) -fPIC
+        -Wno-pointer-to-int-cast -Wno-unused-command-line-argument
+        -Wno-deprecated-declarations -framework CoreFoundation
+        -mmacosx-version-min=10.13)
+    LD=(-arch "$triplet")
+
+    make -C "$WORK/ChOma" CFLAGS="${CF[*]}" LDFLAGS="${LD[*]}" \
+        DISABLE_SIGNING=0 DISABLE_TESTS=1 >/dev/null
+    make -C "$WORK/ChOma" CFLAGS="${CF[*]}" LDFLAGS="${LD[*]}" \
+        DISABLE_SIGNING=0 DISABLE_TESTS=0 output/tests/choma_cli >/dev/null
+
+    built="$WORK/ChOma/output/tests/choma_cli"
+    [[ -f "$built" ]] || die "$arch 编完没找到 output/tests/choma_cli"
+    file -b "$built" | grep -q 'executable' \
+        || die "$arch 的 $built 不是可执行文件（$(file -b "$built")）"
 
     # 单文件产物：客户端落到 bin/choma@<版本>/，stage 也摆成这样。
     stage="$WORK/stage-$arch"
