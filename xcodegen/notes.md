@@ -47,17 +47,27 @@ fb6ce56d7542c4d59b20de0dcfcdd7bf0a0d0edc90cfff67037157d72c4a3c2d  arm64  (min_os
 211156aebc3b0e624eff1a3547e9f0caff99df94c7283b8241e22afe450f06dd  amd64  (min_os 14.0)
 ```
 
-### 预设全找不到：`share/xcodegen` 少了一层（2026-11-24 修）
+### 预设全找不到：装错目录（2026-11-24 修，改了两轮）
 
-`build.sh` 原来写 `cp -R SettingPresets "$pkg/share/xcodegen"`，`share/xcodegen`
-不存在时 `cp -R` 会把**内容**铺到该名下，于是得到 `share/xcodegen/Configs`；
-而代码按 `bundlePath + "../share/xcodegen/SettingPresets/<path>.yml"` 找
-（`SettingsBuilder.swift`），一层都对不上。
+`SettingsBuilder.swift` 按这个顺序找 `SettingPresets/<path>.yml`：
 
-后果很隐蔽：**工程照生成，`xcodegen --version` 也照常通过**，只是 `base` /
-`config` / `platform` 三类默认构建设置是空的，日志里只有三行
+```
+1. "SettingPresets/<path>.yml"                        ← 相对 CWD
+2. bundlePath + "SettingPresets/<path>.yml"           ← 直连调用时 = bin/
+3. symlink.parent() + "SettingPresets/<path>.yml"     ← 经链接启动时 = bin/
+4. bundlePath + "../share/xcodegen/SettingPresets/…"  ← bundlePath 是**目录**，
+                                                         resolvingSymlinksInPath 解析不掉
+                                                         “可执行文件那一层”软链，救不了软链
+```
+
+所以唯一两者都成立的位置是**可执行文件旁边**：`bin/SettingPresets/`。
+
+- 第一轮改成 `share/xcodegen/SettingPresets/`：直连能过，`links/xcodegen` 软链启动仍失败。
+- 第二轮改到 `bin/SettingPresets/`：直连与软链都通过。
+
+后果一直很隐蔽：**工程照生成，`xcodegen --version` 也照常通过**，只是 `base` /
+`config` / `platform` 三类默认构建设置为空，日志里只有三行
 `No "debug config" settings found`。
 
-修法：装到 `share/xcodegen/SettingPresets/`。验证方式不是看退出码，而是生成一个
-最小工程后 `grep -c 'ENABLE_STRICT_OBJC_MSGSEND\|CLANG_ENABLE_OBJC_ARC'`，
-修之前是 0，修之后是 4。
+验证方式不是看退出码：生成最小工程后 `grep -c 'ENABLE_STRICT_OBJC_MSGSEND\|CLANG_ENABLE_OBJC_ARC'`，
+修之前是 0，修之后是 4；且直连与软链两条路径都要测。

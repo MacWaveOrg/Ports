@@ -68,14 +68,17 @@ build_one() {
             swift build -c release --product xcodegen --arch "$arch"
     )
 
-    mkdir -p "$pkg/bin" "$pkg/share/xcodegen"
+    mkdir -p "$pkg/bin"
     cp "$WORK/src/.build/$arch-apple-macosx/release/xcodegen" "$pkg/bin/"
-    # 必须是 share/xcodegen/SettingPresets/ —— 代码按
-    # `bundlePath + "../share/xcodegen/SettingPresets/<path>.yml"` 找（见
-    # SettingsBuilder.swift）。直接 `cp -R SettingPresets share/xcodegen` 会把内容
-    # 铺平成 share/xcodegen/Configs，预设全部找不到：工程照生成，但 base/config/
-    # platform 的默认构建设置是空的，而 `xcodegen --version` 完全看不出来。
-    cp -R "$WORK/src/SettingPresets" "$pkg/share/xcodegen/SettingPresets"
+    # 预设必须放在**可执行文件所在目录**：代码依次试
+    #   bundlePath + "SettingPresets/<path>.yml"          ← 直连调用时 = bin/
+    #   symlink.parent() + "SettingPresets/<path>.yml"    ← 经链接启动时 = bin/
+    #   bundlePath + "../share/xcodegen/SettingPresets/…" ← 只解析目录，不解析
+    #                                                      可执行文件那层软链，救不了软链
+    # 放在 share/xcodegen/ 下时，`bin/xcodegen` 直连能找到、`links/xcodegen` 软链
+    # 启动就找不到 —— 工程照生成、`--version` 照常通过，只是 base/config/platform
+    # 三类默认构建设置为空。
+    cp -R "$WORK/src/SettingPresets" "$pkg/bin/SettingPresets"
     cp "$WORK/src/LICENSE" "$pkg/" 2>/dev/null || true
 
     # 重定位必须在签名之前：install_name_tool 改写会作废已有签名。
@@ -83,7 +86,7 @@ build_one() {
     codesign --force --sign - "$pkg/bin/xcodegen" >/dev/null 2>&1
 
     mkdir -p "$OUT"
-    tar -cJf "$OUT/xcodegen-${VERSION}-${arch}.tar.xz" -C "$pkg" bin share LICENSE
+    tar -cJf "$OUT/xcodegen-${VERSION}-${arch}.tar.xz" -C "$pkg" bin LICENSE
 }
 
 build_one arm64
