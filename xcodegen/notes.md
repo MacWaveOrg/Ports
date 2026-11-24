@@ -46,3 +46,18 @@ $ diff direct.pbxproj link.pbxproj
 fb6ce56d7542c4d59b20de0dcfcdd7bf0a0d0edc90cfff67037157d72c4a3c2d  arm64  (min_os 14.0)
 211156aebc3b0e624eff1a3547e9f0caff99df94c7283b8241e22afe450f06dd  amd64  (min_os 14.0)
 ```
+
+### 预设全找不到：`share/xcodegen` 少了一层（2026-11-24 修）
+
+`build.sh` 原来写 `cp -R SettingPresets "$pkg/share/xcodegen"`，`share/xcodegen`
+不存在时 `cp -R` 会把**内容**铺到该名下，于是得到 `share/xcodegen/Configs`；
+而代码按 `bundlePath + "../share/xcodegen/SettingPresets/<path>.yml"` 找
+（`SettingsBuilder.swift`），一层都对不上。
+
+后果很隐蔽：**工程照生成，`xcodegen --version` 也照常通过**，只是 `base` /
+`config` / `platform` 三类默认构建设置是空的，日志里只有三行
+`No "debug config" settings found`。
+
+修法：装到 `share/xcodegen/SettingPresets/`。验证方式不是看退出码，而是生成一个
+最小工程后 `grep -c 'ENABLE_STRICT_OBJC_MSGSEND\|CLANG_ENABLE_OBJC_ARC'`，
+修之前是 0，修之后是 4。
