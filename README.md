@@ -98,6 +98,20 @@ relocate() {
    作废已有签名；反过来先签后改，产物在 Apple Silicon 上直接不执行。
    LDFLAGS 里记得带 `-Wl,-headerpad_max_install_names`，否则路径变长会写不下。
 
+## 发布之后：四处清单要一起改
+
+自建包一旦进了 Bottle + 索引，**官网与三份 README 必须同步**，否则「索引里有、
+网站上没有」：
+
+| 位置 | 改什么 |
+| --- | --- |
+| `infosource/README.md` | `Supported Packages` 一节加/改一行 `<包名> by <作者>` |
+| `MacWave/README.md`、`README.zh-Hans.md` | 同上，两份逐行相同 |
+| `Pages/index.html` | `<div class="pkg-list">` 加一行 `<span>包名</span>`（只有包名） |
+
+发**版本**时还要改官网的版本号（`Pages/i18n.js` 的 `version.block`，8 种语言）——
+细则见 `MacWave/docs/RELEASE-CHECKLIST.md` 第 6 步。
+
 ## 已收录
 
 | 包 | 上游 | 上游最后一版带 macOS 产物 |
