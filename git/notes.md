@@ -113,3 +113,35 @@ $ links/git@2.56.1 -C /tmp/c log --oneline -1
 ```
 
 `--check` 判定已位置无关（只链系统库），本步为空转、作为闸门存在。
+
+## 三处文本文件里的构建前缀（2026-11-24 修）
+
+`make install` 会把 `$(prefix)` 直接替换进三个**文本**脚本。构建时 prefix 是
+`mktemp -d` 出来的目录，编完即删，所以这三处指向不存在的路径。`install_name_tool`
+只管 Mach-O，改不到文本 —— 只能在构建时重写：
+
+| 文件 | 原来 | 现在 |
+| --- | --- | --- |
+| `libexec/git-core/git-instaweb` | `root='<构建目录>/share/gitweb'` | `root="$(cd "$(dirname "$0")/../../share/gitweb" && pwd)"` |
+| `libexec/git-core/git-sh-i18n` | `TEXTDOMAINDIR="<构建目录>/share/locale"` | `TEXTDOMAINDIR="${GIT_EXEC_PATH%/}/../share/locale"`（NLS 已关，本身是死代码） |
+| `share/gitweb/gitweb.cgi` | `our $GIT = "<构建目录>/bin/git";` | `our $GIT = "$FindBin::Bin/../../bin/git";`（另加 `use FindBin;`） |
+
+gitweb.cgi 不用「`$GIT = "git"` 走 PATH」：CGI 的 `PATH` 不可指望；用 FindBin 推
+包内相对位置，和这次重定位的思路一致。
+
+### 二进制里仍然嵌着构建目录，这是**故意保留**的
+
+`bin/git`（以及 libexec 下那些硬链接）里能 `strings` 出
+`<构建目录>/bin/git@2.56.1` —— 那是 `RUNTIME_PREFIX` 的**编译期兜底**：运行时
+git 自己算 exec path，算不出来才用它。删不掉也不必删（源码里必须有这个值）。
+
+所以 `build.sh` 末尾那条「整棵树不该再有构建目录」的断言**只看文本文件**，
+跳过 Mach-O —— 与 `selfbuilt_check.sh` 里 `grep -I` 的口径一致。
+
+### 断言本身踩过的坑（记下来免得重犯）
+
+- `pathlib.Path` 会把 `//` 归一成 `/`，而 macOS 的 `$TMPDIR` 自带尾斜杠，
+  二进制里是 `T//git-build…`：只比 `str(Path(argv))` 会**静默漏检**。
+  两个写法都要比。
+- 它第一版就因为这个原因通过了 —— 断言打印「通过」不代表它真的在查东西。
+

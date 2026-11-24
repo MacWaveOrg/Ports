@@ -140,6 +140,84 @@ build_one() {
             CFLAGS="$cflags" LDFLAGS="$ldflags" prefix="$tree" install >/dev/null
     )
 
+    # git 的 Makefile 会把 $(prefix) 直接替换进三个**文本**脚本；而我们的 prefix 是
+    # mktemp 出来的目录，编完就删，于是这三处指向一个不存在的路径。
+    # install_name_tool 只管 Mach-O，改不到文本，所以只能在构建时重写：
+    #   git-instaweb   默认 root      → 按脚本自身位置推 ../../share/gitweb
+    #   git-sh-i18n    TEXTDOMAINDIR  → 按 GIT_EXEC_PATH 推（NLS 已关，本身是死代码）
+    #   gitweb.cgi     $GIT           → FindBin 推 ../../bin/git
+    python3 - "$tree" <<'PYEOF'
+import pathlib, re, sys
+
+tree = pathlib.Path(sys.argv[1])
+prefix = str(tree)
+# Path 会把 // 归一成 /，而 $TMPDIR 自带尾斜杠：二进制里可能是一者或另一者。
+prefix_bytes_set = {prefix.encode(), str(tree).encode()}
+changed = []
+
+
+def rewrite(rel, pattern, replacement):
+    path = tree / rel
+    text = path.read_text()
+    new_text, count = re.subn(pattern, replacement, text)
+    if count == 0:
+        raise SystemExit(f"pattern not found in {rel}: {pattern[:70]}")
+    path.write_text(new_text)
+    changed.append(f"{rel}({count})")
+
+
+# 1) 默认 root：改成按脚本自身位置推（放 share/gitweb 的相对位置）
+rewrite("libexec/git-core/git-instaweb",
+        r"# Default is /[^\n]*/share/gitweb",
+        "# Default is share/gitweb, resolved relative to this script")
+rewrite("libexec/git-core/git-instaweb",
+        r"""root='/[^']*/share/gitweb'""",
+        'root="$(cd "$(dirname "$0")/../../share/gitweb" && pwd)"')
+
+# 2) TEXTDOMAINDIR：按 GIT_EXEC_PATH 推（NLS 已关，本身是死代码，但不能留死路径）
+rewrite("libexec/git-core/git-sh-i18n",
+        r'TEXTDOMAINDIR="/[^"]*/share/locale"',
+        'TEXTDOMAINDIR="${GIT_EXEC_PATH%/}/../share/locale"')
+
+# 3) gitweb.cgi 的 $GIT：FindBin 推（cgi 的 cwd 不可靠，不能靠相对 cwd）
+gitweb = tree / "share/gitweb/gitweb.cgi"
+text = gitweb.read_text()
+text, count = re.subn(r'our \$GIT = "/[^"]*/bin/git";',
+                      'our $GIT = "$FindBin::Bin/../../bin/git";', text)
+if count == 0:
+    raise SystemExit("gitweb.cgi: $GIT 定义没找到")
+if "use FindBin;" not in text:
+    text, added = re.subn(r"^use strict;\nuse warnings;\n",
+                          "use strict;\nuse warnings;\nuse FindBin;\n", text, count=1, flags=re.M)
+    if added != 1:
+        raise SystemExit("gitweb.cgi: 没能在 use 区插入 use FindBin")
+gitweb.write_text(text)
+changed.append("share/gitweb/gitweb.cgi")
+
+# 兜底：文本文件里不该再有本次构建目录。
+#
+# 只看文本（跳过 Mach-O）是刻意的：git 用 RUNTIME_PREFIX 运行时自己算 exec path，
+# 但编译期必须留一个兜底前缀 —— 那个字符串就嵌在二进制里，内容正是本次构建目录。
+# 它只在「算不出自己的路径」时才会被用到（见 exec-cmd.c 的补丁），删不掉也不必删。
+# selfbuilt_check.sh 的同类检查同样用 grep -I 跳过二进制，两边口径一致。
+MACHO_MAGICS = {b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
+                b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe",
+                b"\xfe\xed\xfa\xcf", b"\xcf\xfa\xed\xfe"}
+leaked = []
+for p in tree.rglob("*"):
+    if not p.is_file() or p.is_symlink():
+        continue
+    data = p.read_bytes()
+    if data[:4] in MACHO_MAGICS:
+        continue
+    if any(n in data for n in prefix_bytes_set):
+        leaked.append(str(p.relative_to(tree)))
+if leaked:
+    raise SystemExit(f"build prefix still present in text files: {leaked}")
+
+print("  rewrote:", ", ".join(changed))
+PYEOF
+
     bash "$RELOCATE_SH" "$stage"
     sign_and_dedupe "$tree"
 
