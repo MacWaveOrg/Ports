@@ -101,15 +101,23 @@ echo "🌊 Checking ${#MACHOS[@]} Mach-O file(s) from $ARTIFACT"
 SYSTEM_PREFIXES='^(/usr/lib/|/System/|/Library/Apple/)'
 RELATIVE_PREFIXES='^(@loader_path/|@executable_path/|@rpath/)'
 
+# 索引里叫 amd64，clang / lipo 报的是 x86_64 —— 同一个架构两种写法，先归一化，
+# 否则 --arch amd64 对任何 x86_64 产物都会报 "architecture is 'x86_64'"。
+EXPECT_ARCH="$ARCH"
+EXPECT_NOTE=""
+case "$ARCH" in
+    amd64) EXPECT_ARCH=x86_64; EXPECT_NOTE=" (lipo calls it x86_64)" ;;
+esac
+
 for binary in "${MACHOS[@]}"; do
     rel="${binary#"$WORK"/}"
 
     # 1. 架构
-    if [[ -n "$ARCH" ]]; then
+    if [[ -n "$EXPECT_ARCH" ]]; then
         arches="$(lipo -archs "$binary" 2>/dev/null || true)"
         case " $arches " in
-            *" $ARCH "*) ;;
-            *) problem "$rel: architecture is '${arches:-unknown}', expected $ARCH" ;;
+            *" $EXPECT_ARCH "*) ;;
+            *) problem "$rel: architecture is '${arches:-unknown}', expected ${ARCH}${EXPECT_NOTE}" ;;
         esac
     fi
 
@@ -135,10 +143,13 @@ done
 
 # 4. 整树包：文本文件里写死的构建目录
 if [[ "$TREE" -eq 1 ]]; then
+    # build.sh 的 stage 通常在 mktemp -d 的 $TMPDIR 下，macOS 上是
+    # /var/folders/... —— 只搜 /Users 与 /opt/local 会漏掉这一类。
     while IFS= read -r hit; do
         note "text file references a build path: ${hit#"$WORK"/}"
         note "  compiled-in prefix; it will point at a directory that does not exist for the user"
-    done < <(grep -rIl -e '/Users/' -e '/opt/local' -e "$WORK" "$ROOT" 2>/dev/null | head -5)
+    done < <(grep -rIl -e '/Users/' -e '/opt/local' -e '/var/folders/' \
+        -e '/private/var/folders/' -e "$WORK" "$ROOT" 2>/dev/null | head -5)
 
     if [[ -n "$MAIN" ]]; then
         [[ -e "$ROOT/$MAIN" ]] || problem "main executable missing: $MAIN"

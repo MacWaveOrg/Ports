@@ -1,22 +1,37 @@
 # git 实测记录
 
-数值取自 2026-11-22 的构建（macOS Xcode 17 / SDK 15.5，本机 arm64 + Rosetta 跑 amd64）。
+数值取自 2026-11-24 的构建（macOS Xcode 17 / SDK 15.5，本机 arm64 + Rosetta 跑 amd64）。
+这一版把 stage 摆成运行时布局 `bin/git@<版本>/` 并在打包前跑了重定位，所以哈希与
+2026-11-22 那版不同。
 
 ## 产物
 
 | 架构 | 归档 | 大小 | `bin/git` sha256 | min_os |
 | --- | --- | --- | --- | --- |
-| arm64 | `git-2.56.1-arm64.tar.xz` | 3,517,420 B | `ffa9629af71affdb6b6514cd5f4f5b2ac3121636806207a624bfb23a99cd38b9` | 12.0 |
-| amd64 | `git-2.56.1-amd64.tar.xz` | 3,865,764 B | `f53773d624bc050d51a20af467e26e05a8b7925184e3cc3333fcc8fab256326f` | 12.0 |
+| arm64 | `git-2.56.1-arm64.tar.xz` | 3,520,556 B | `e7fd8a9b3a321c4cbab7d2f4ee4bc4089041ad73353c3f7987beaba9489d3e88` | 12.0 |
+| amd64 | `git-2.56.1-amd64.tar.xz` | 3,873,408 B | `e7c6979d696a18f7f5cf7cec0c0d154be487c5d52a6348b047278bf95b22898d` | 12.0 |
 
 归档本身的 sha256（索引记录里写这两个）：
 
 ```
-85c902706948a50f84c055d100c6da4c3942dda6b193ff1f246a87f0d7aac29c  git-2.56.1-arm64.tar.xz
-3f90d7ae2d20dcf38cfeb9c3a7927ad3723400460b5158b3f68fb2dbf81d42b4  git-2.56.1-amd64.tar.xz
+ed1ff710f183dddbc6098cfe0288d1f8caa5feeaeef65aebca5cf2ef4b68c6ad  git-2.56.1-arm64.tar.xz
+793681d40b654fff678c7f49d3a45f3850963adb7cc9b4ec3630465de56208a7  git-2.56.1-amd64.tar.xz
 ```
 
 注意 `bin/git` 的 sha256 与归档的不同：索引要写**归档**的哈希（客户端校验的是下载到的那个文件）。
+
+## 重定位（2026-11-24）
+
+`build.sh` 现在把 stage 装成 `<stage>/bin/git@<版本>/{bin,libexec,share}` ——和客户端
+落到 `<base>/bin/<名称>@<版本>/` 的形状一致 ——然后跑
+`MacWave/scripts/relocate_rpath.py <stage> --check`，有绝对路径才改写，最后才签名、
+打包。顺序是「编 → 重定位 → 签名 → 打包」，反过来签名会作废。
+
+这一版 `--check` 直接判定「已经位置无关」：git 只链
+`libz / libiconv / libSystem / CoreServices / CoreFoundation`，全在系统路径里。
+所以这一步目前是**闸门**而不是修复——哪天有人加了个 `--with-*`，`--check` 会当场报出来。
+`-Wl,-headerpad_max_install_names` 已经加进 LDFLAGS，真需要改写时 install_name_tool
+才有地方写更长的 `@loader_path/...`。
 
 ## 签名的坑：594 MB 从哪来（2026-11-22 修正）
 
@@ -31,19 +46,20 @@
 `build.sh` 里的 `sign_and_dedupe` 按 LC_UUID 分组，每组只签第一个，其余 `ln` 回去。
 先发出去的那版（`2ff8bdc1…` / `ecf8a4d9…`）就是逐个签的，已用瘦身版替换。
 
+2026-11-24 实测：`libexec/git-core` 下 203 个文件只占 55 个 inode，整棵树 25 MB（arm64）。
+
 ## selfbuilt_check.sh
 
 ```
-✅ Mach-O（magic cffaedfe）
-✅ 架构 arm64（索引里的 arm64）
-✅ 可执行位在
-✅ ad-hoc 签名有效
+✅ 164 个 Mach-O，架构 arm64 / amd64
+✅ ad-hoc 签名有效（codesign --verify 通过 Designated Requirement）
 ✅ min_os 12.0（LC_BUILD_VERSION）
-✅ 除系统库外没有外部依赖（静态链接干净）
-✅ 实跑 git --version 通过（exit 0）
+✅ 除系统库外没有引用（otool -L 只有 /usr/lib 与 /System）
+✅ 实跑：arm64 原生、amd64 走 Rosetta，`--version` 与 `--exec-path` 都指向解包目录
 ```
 
-amd64 走 Rosetta 跑同样全绿。
+历史遗留的三处**文本**文件把构建前缀写死了（见坑 5），闸门把它们记为 note 而非
+problem，所以退出码仍是 0。
 
 ## 实测过的命令
 
@@ -62,6 +78,7 @@ $ links/git@2.56.1 -C /tmp/c log --oneline -1
 ## 踩过的坑
 
 1. **`-arch amd64` 不存在。** clang 只认 `x86_64`；索引里叫 amd64 是 MacWave 的命名。
+   `selfbuilt_check.sh --arch amd64` 已做归一化，别再手改成 `x86_64` 去绕。
 2. **默认会链 `clang` 是 MacPorts 的。** 本机 PATH 里 `/opt/local/bin` 排在前面，
    直接用 `clang` 编出来的 `otool -L` 是 `/opt/local/lib/libz.1.dylib`。必须写
    `/usr/bin/clang`，并加 `NO_DARWIN_PORTS` / `NO_HOMEBREW`（git 的 Makefile 会
@@ -71,3 +88,16 @@ $ links/git@2.56.1 -C /tmp/c log --oneline -1
    `_encode_varint` 未定义。加 `NO_RUST=YesPlease`。
 4. **`RUNTIME_PREFIX` 在软链下失效。** 见 README 的补丁一节；不补的话
    `--exec-path` 指向构建机的 `/Users/…/stage-arm64/libexec/git-core`。
+5. **三个文本文件把构建前缀编了进去（2026-11-24 发现，尚未修）。** Mach-O 干净，
+   但 `make install` 会把 `prefix` 替换进这三个文件：
+
+   ```
+   libexec/git-core/git-instaweb     root='/var/folders/…/stage-arm64/bin/git@2.56.1/share/gitweb'
+   libexec/git-core/git-sh-i18n      TEXTDOMAINDIR='/var/folders/…/share/locale'
+   share/gitweb/gitweb.cgi           our $GIT = "/var/folders/…/stage-arm64/bin/git@2.56.1/bin/git"
+   ```
+
+   影响：`git instaweb` 默认 path 失效（`--local` 可绕）；NLS 已关，`git-sh-i18n` 用不到；
+   `gitweb.cgi` 装到用户机器上跑不起来。都属于边角功能，主命令不受影响。
+   之前一直没发现，是因为闸门只搜 `/Users/` 与 `/opt/local`，而 stage 在 `$TMPDIR`
+   （`/var/folders/…`）下 —— 现在闸门已加上 `/var/folders/`。

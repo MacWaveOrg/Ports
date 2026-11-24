@@ -56,6 +56,25 @@ bash scripts/selfbuilt_check.sh out/git-2.56.1-arm64.tar.xz --arch arm64 --tree 
 用 MacWave 仓库的 `scripts/relocate_rpath.py <stage-dir>` 改成 `@loader_path` 相对形式，
 重新签名后再打包（规则与取舍见 MacWave 的 `docs/RELOCATION.md`）。
 
+`git/build.sh` 已经把这步固化了，其余包照它的样子加：
+
+```bash
+relocate() {
+    python3 "$RELOCATE" "$stage" --check && return 0   # 已经干净就跳过
+    python3 "$RELOCATE" "$stage"
+    python3 "$RELOCATE" "$stage" --check
+}
+```
+
+两条约束：
+
+1. **stage 要摆成运行时布局** `<stage>/bin/<名称>@<版本>/`。`relocate_rpath.py` 按
+   客户端最终安装的位置算相对路径，布局不同算出来的就是错的（和 MacPorts 的
+   `destroot` 一个道理）。
+2. **顺序只能是「编 → 重定位 → 签名 → 打包」**。`install_name_tool` 改写 Mach-O 会
+   作废已有签名；反过来先签后改，产物在 Apple Silicon 上直接不执行。
+   LDFLAGS 里记得带 `-Wl,-headerpad_max_install_names`，否则路径变长会写不下。
+
 ## 已收录
 
 | 包 | 上游 | 上游最后一版带 macOS 产物 |

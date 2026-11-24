@@ -9,14 +9,17 @@
 # 为什么要自建：git 官方从来不发布二进制产物（GitHub 上只有源码 tag），
 # 而 conda-forge / Homebrew 的都是别人重编的、带各自前缀和 8 个外部动态库。
 #
-# 四条约束，别改：
+# 五条约束，别改：
 #   1. 固定上游版本与源码 sha256 —— 索引里的 sha256 对应某一次具体构建；
 #   2. 两个架构分别编，不要 universal：索引是「每架构一个产物」；
 #   3. 编译时把 Homebrew / MacPorts 的默认搜索路径关掉（NO_DARWIN_PORTS /
 #      NO_HOMEBREW），否则 git 会链到 /opt/local/lib/libz 这类构建机路径；
 #   4. 编完给每个 Mach-O ad-hoc 签名（Apple 芯片拒绝执行未签名的 arm64），但
 #      签名会断开 git-core 里那些硬链接，所以签完要按 LC_UUID 重新接回去 ——
-#      否则整棵树会从 25 MB 涨到 594 MB。见 sign_and_dedupe。
+#      否则整棵树会从 25 MB 涨到 594 MB。见 sign_and_dedupe；
+#   5. 顺序只能是「编 → 重定位 → 签名 → 打包」。重定位（install_name_tool 改写
+#      Mach-O）会作废已有签名，所以它必须在签名之前；stage 也必须摆成**运行时
+#      布局** bin/git@<版本>/，否则 relocate_rpath.py 算出的相对路径是错的。
 #
 # 依赖面只留系统库：关掉 gettext / pcre2 / OpenSSL / Python / Rust，
 # TLS 交给系统 libcurl（Secure Transport）。otool -L 里只剩
@@ -43,9 +46,14 @@ RESET='\033[0m'
 say() { printf '%b\n' "$*"; }
 die() { printf '%b\n' "${RED_BOLD}🌊 Error: $*${RESET}" >&2; exit 1; }
 
-for tool in curl make clang codesign lipo patch tar; do
+for tool in curl make clang codesign lipo patch tar python3; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found (install the Xcode command line tools)"
 done
+
+# relocate_rpath.py 只有一份实现，在 MacWave 仓库里 —— 不要在 Ports 里抄一份。
+# 需要换位置就用 MACWAVE_RELOCATE 指过去。
+RELOCATE="${MACWAVE_RELOCATE:-$(cd "$HERE/../../MacWave" 2>/dev/null && pwd || true)/scripts/relocate_rpath.py}"
+[ -f "$RELOCATE" ] || die "relocate_rpath.py not found: $RELOCATE (set MACWAVE_RELOCATE)"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/git-build.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
@@ -109,25 +117,49 @@ sign_and_dedupe() {
     rm -f "$plan"
 }
 
+relocate() {
+    # 把整树里的非系统引用改成 @loader_path/...，保证装到任意 base_dir 都成立。
+    # 改之前先 --check：本来就干净（现在 git 只链系统库）就直接跳过，不做无谓改写。
+    local stage="$1"
+
+    say "${GREEN}🌊 Checking position independence${RESET}"
+    if python3 "$RELOCATE" "$stage" --check; then
+        return 0
+    fi
+
+    say "${GREEN}🌊 Relocating absolute references${RESET}"
+    python3 "$RELOCATE" "$stage"
+    python3 "$RELOCATE" "$stage" --check
+}
+
 build_one() {
     local arch="$1" clang_arch="$2"
+    # stage 摆成**运行时布局**：客户端把整树落到 <base>/bin/<名称>@<版本>/，
+    # 所以这里就必须是 <stage>/bin/git@<版本>/{bin,libexec,share}，
+    # relocate_rpath.py 才能按最终位置算出正确的相对路径。
     local stage="$WORK/stage-$arch"
+    local tree="$stage/bin/git@${VERSION}"
     local cflags="-arch $clang_arch -O2 -mmacosx-version-min=12.0 -isysroot $SDK"
+    # -headerpad_max_install_names 给 install_name_tool 留出改写空间，少了它
+    # 重定位会报 "larger updated load commands do not fit"。
+    local ldflags="$cflags -Wl,-headerpad_max_install_names"
 
     say "${GREEN}🌊 Building ${arch}${RESET}"
+    mkdir -p "$tree"
     (
         cd "$SRC"
         make clean >/dev/null 2>&1 || true
         make -j"$(sysctl -n hw.ncpu)" "${MAKE_VARS[@]}" \
-            CFLAGS="$cflags" LDFLAGS="$cflags" prefix="$stage"
+            CFLAGS="$cflags" LDFLAGS="$ldflags" prefix="$tree"
         make -j"$(sysctl -n hw.ncpu)" "${MAKE_VARS[@]}" \
-            CFLAGS="$cflags" LDFLAGS="$cflags" prefix="$stage" install >/dev/null
+            CFLAGS="$cflags" LDFLAGS="$ldflags" prefix="$tree" install >/dev/null
     )
 
-    sign_and_dedupe "$stage"
+    relocate "$stage"
+    sign_and_dedupe "$tree"
 
     mkdir -p "$OUT"
-    tar -cJf "$OUT/git-${VERSION}-${arch}.tar.xz" -C "$stage" bin libexec share
+    tar -cJf "$OUT/git-${VERSION}-${arch}.tar.xz" -C "$tree" bin libexec share
 }
 
 build_one arm64 arm64
@@ -140,5 +172,5 @@ for file in "$OUT/git-${VERSION}-arm64.tar.xz" "$OUT/git-${VERSION}-amd64.tar.xz
         "$(shasum -a 256 "$file" | cut -d' ' -f1)"
 done
 say ""
-say "下一步：解包后对 bin/git 跑 scripts/selfbuilt_check.sh（在 MacWave 仓库里），"
-say "        --arch arm64 / --arch amd64 --bin-name git；索引记录要写 install: \"tree\"。"
+say "下一步：对两个归档跑 scripts/selfbuilt_check.sh（在本仓库）："
+say "        --arch arm64 / --arch amd64 --tree --main bin/git；索引记录要写 install: \"tree\"。"
