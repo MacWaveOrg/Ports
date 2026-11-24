@@ -35,6 +35,27 @@
     notes.md       实测记录：架构、min_os、otool -L 的输出、跑过的命令
 ```
 
+## 上传前必跑：`scripts/selfbuilt_check.sh`
+
+每个 `build.sh` 结尾都会说「先跑 `scripts/selfbuilt_check.sh` 再上传」，这个脚本就是
+那道闸门。它检查的是**装到用户机器上才会暴露**的问题：
+
+| 检查 | 为什么 |
+| --- | --- |
+| 架构与 `--arch` 一致 | 拿 arm64 的产物发 amd64 的条目，用户那边直接 `Bad CPU type` |
+| `codesign --verify` 通过 | 改过路径没重签，Apple Silicon 上根本不执行 |
+| 引用里没有绝对路径 | **4.6 起的硬规则**：除 `/usr/lib`、`/System`、`/Library/Apple`，`LC_LOAD_DYLIB` / `LC_ID_DYLIB` 只能是 `@loader_path` / `@rpath` / `@executable_path`。写死了就只能在构建机那个目录里跑 |
+| 整树包的文本文件里没有构建目录 | 例如编进去的 `GIT_EXEC_PATH`，Mach-O 检查看不见，换台机器就指向不存在的目录 |
+
+```bash
+bash scripts/selfbuilt_check.sh out/bash-arm64 --arch arm64
+bash scripts/selfbuilt_check.sh out/git-2.56.1-arm64.tar.xz --arch arm64 --tree --main bin/git
+```
+
+退出码非 0 就不要上传。如果报的是「绝对路径」，说明这个包**必须在构建时重定位**：
+用 MacWave 仓库的 `scripts/relocate_rpath.py <stage-dir>` 改成 `@loader_path` 相对形式，
+重新签名后再打包（规则与取舍见 MacWave 的 `docs/RELOCATION.md`）。
+
 ## 已收录
 
 | 包 | 上游 | 上游最后一版带 macOS 产物 |
