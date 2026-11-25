@@ -40,7 +40,26 @@ STAGE="${1:-}"
 command -v python3 >/dev/null 2>&1 || die "python3 not found"
 
 say "${GREEN}🌊 Checking position independence${RESET}"
+
+# 打完标记之前必须确认整棵树真的位置无关：标记等于对客户端说「这份产物不用再动」，
+# 客户端会因此跳过所有检查（surbboard/transfer.sh 看到 _RELOCATED 直接返回）。
+# 所以标记只在 --check 通过之后写，写失败就 die，绝不留半成品。
+mark_relocated() {
+    local dir count=0
+    # 每个版本目录一个标记：<stage>/bin/<名>@<版本号>/、<stage>/deps/<名>/<名>@<版本号>/
+    # 打包脚本按 bin/、deps/ 整棵取走，标记跟着产物一起进瓶。
+    for dir in "$STAGE"/bin/*@* "$STAGE"/deps/*/*@*; do
+        [[ -d "$dir" ]] || continue
+        printf '@loader_path\n' > "$dir/_RELOCATED" \
+            || die "cannot write the marker into $dir"
+        count=$((count + 1))
+    done
+    [[ "$count" -gt 0 ]] || die "no version directory found under $STAGE; nothing to mark"
+    say "${GREEN}🌊 Marked ${count} version directory(ies) as prebuilt${RESET}"
+}
+
 if python3 "$RELOCATE" "$STAGE" --check; then
+    mark_relocated
     exit 0
 fi
 
@@ -49,3 +68,4 @@ python3 "$RELOCATE" "$STAGE" \
     || die "relocation failed; a reference does not resolve inside the staging tree"
 python3 "$RELOCATE" "$STAGE" --check \
     || die "still not position-independent after relocation"
+mark_relocated
