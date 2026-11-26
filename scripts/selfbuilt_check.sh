@@ -12,7 +12,10 @@
 #      @loader_path / @rpath / @executable_path。写死了就意味着产物只能活在构建机的
 #      那个目录里，装到用户机器上换个 base_dir 就加载不到库；
 #   4. 整树包里有没有把构建目录写进文本文件（例如编进去的 GIT_EXEC_PATH），
-#      这类问题在 Mach-O 检查里看不见，但换台机器就指向不存在的目录。
+#      这类问题在 Mach-O 检查里看不见，但换台机器就指向不存在的目录；
+#   5. minos（「用户最低要哪个 macOS」）有没有超过约定地板。忘了写
+#      -mmacosx-version-min 时 minos 就等于构建机的系统版本 —— aria2c@1.37.0
+#      就是这么变成「声明支持 12、实际要求 15」的，而构建机上完全看不出来。
 #
 # 用法：
 #   bash scripts/selfbuilt_check.sh out/bash-arm64 --arch arm64
@@ -37,20 +40,33 @@ ARTIFACT=""
 ARCH=""
 TREE=0
 MAIN=""
+# 空 = 不检查 minos；build-env.sh 会按架构传 15.0（arm64）/ 12.0（x86_64）
+MAX_MINOS=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arch) ARCH="${2:-}"; shift 2 ;;
         --tree) TREE=1; shift ;;
         --main) MAIN="${2:-}"; shift 2 ;;
+        --max-minos) MAX_MINOS="${2:-}"; shift 2 ;;
         -h|--help) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown option $1" ;;
         *) ARTIFACT="$1"; shift ;;
     esac
 done
 
-[[ -n "$ARTIFACT" ]] || die "usage: selfbuilt_check.sh <artifact> [--arch arm64|amd64] [--tree] [--main bin/<name>]"
+[[ -n "$ARTIFACT" ]] || die "usage: selfbuilt_check.sh <artifact> [--arch arm64|amd64] [--tree] [--main bin/<name>] [--max-minos X.Y]"
 [[ -e "$ARTIFACT" ]] || die "artifact not found: $ARTIFACT"
+
+# 没给 --max-minos 时按架构取默认地板（与 scripts/build-env.sh 的
+# MW_DEPLOYMENT_TARGET_* 是同一组值；改一处要改两处，所以这里只留一份表并打印出来）。
+if [[ -z "$MAX_MINOS" ]]; then
+    case "$ARCH" in
+        arm64)        MAX_MINOS="${MW_DEPLOYMENT_TARGET_ARM64:-15.0}" ;;
+        amd64|x86_64) MAX_MINOS="${MW_DEPLOYMENT_TARGET_X86_64:-12.0}" ;;
+    esac
+    [[ -n "$MAX_MINOS" ]] && note "minos floor for ${ARCH}: $MAX_MINOS"
+fi
 
 for tool in otool codesign lipo file; do
     command -v "$tool" > /dev/null 2>&1 || die "$tool not found (install the Xcode command line tools)"
@@ -119,6 +135,21 @@ for binary in "${MACHOS[@]}"; do
             *" $EXPECT_ARCH "*) ;;
             *) problem "$rel: architecture is '${arches:-unknown}', expected ${ARCH}${EXPECT_NOTE}" ;;
         esac
+    fi
+
+    # 1.5 minos：产物的最低系统要求不能超过地板
+    if [[ -n "$MAX_MINOS" ]]; then
+        minos="$(vtool -show-build "$binary" 2>/dev/null | awk '/minos/{print $2; exit}')"
+        if [[ -n "$minos" ]]; then
+            # 版本比较：15.0 > 14.5 > 12.0（不能用字符串比，10.15 vs 9.0）
+            if [[ "$(printf '%s\n%s\n' "$minos" "$MAX_MINOS" | sort -V | tail -1)" == "$minos" \
+                  && "$minos" != "$MAX_MINOS" ]]; then
+                problem "$rel: minos $minos exceeds the ${ARCH:-arch} floor $MAX_MINOS" \
+                        "(missing -mmacosx-version-min? use scripts/build-env.sh)"
+            fi
+        else
+            note "$rel: no LC_BUILD_VERSION minos (very old toolchain?)"
+        fi
     fi
 
     # 2. 单文件产物必须是可执行文件，不能是 dylib —— choma 就栽在这里：

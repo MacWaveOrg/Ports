@@ -35,10 +35,35 @@
     notes.md       实测记录：架构、min_os、otool -L 的输出、跑过的命令
 
 scripts/
+    build-env.sh        公共构建环境：系统地板 / -arch / -isysroot / 安装前缀（见下）
     fetch.sh            统一取件口（见下）
     relocate_stage.sh   打包前的重定位
     selfbuilt_check.sh  上传前的闸门
 ```
+
+## 构建环境一律走 `scripts/build-env.sh`
+
+`-arch` / `-mmacosx-version-min` / `-isysroot` / `-Wl,-headerpad_max_install_names` 这四件
+不要在各家的 `build.sh` 里手写 —— 漏一个的表现都是「构建机上一切正常，用户那边不行」。
+`source` 一次，全部就位：
+
+```bash
+source "$HERE/../scripts/build-env.sh"
+mw_build_env arm64                       # 导出 CC/CXX/CFLAGS/LDFLAGS/MACOSX_DEPLOYMENT_TARGET
+"$SRC/configure" --prefix="$(mw_prefix jq 1.8.2)" ...
+mw_verify_artifact out/jq-arm64 arm64     # 跑闸门，minos 地板自动对齐架构
+```
+
+### 系统地板按架构分，不是全库一个值
+
+| 架构 | 地板 | 理由 |
+| --- | --- | --- |
+| `arm64` | **15.0**（Sequoia） | 任何 Apple Silicon Mac 都跑得动 15，这个地板排除不了任何硬件，只排除「能升但不升」 |
+| `x86_64` | **12.0**（Monterey） | 由 Intel 构建机的 SDK 决定，本来就是这个值；它让停更的老 Intel Mac 也能装 |
+
+构建机不能比目标地板更老（用老 SDK 编不出新系统的产物），`mw_build_env` 会直接拦下来。
+`--prefix` 用 `mw_prefix <名> <版本>` 给**装完之后的绝对路径**（`/opt/macwave/Shore/<名>/<版本>`）：
+1.0 起安装位置写死，所以 `.pc`、`configure` 烘进去的前缀天生就是对的，不需要事后替换。
 
 ## 取件一律走 `scripts/fetch.sh`
 
@@ -69,6 +94,7 @@ bash "$FETCH" "<url>" "<output>"
 | `codesign --verify` 通过 | 改过路径没重签，Apple Silicon 上根本不执行 |
 | 引用里没有绝对路径 | **4.6 起的硬规则**：除 `/usr/lib`、`/System`、`/Library/Apple`，`LC_LOAD_DYLIB` / `LC_ID_DYLIB` 只能是 `@loader_path` / `@rpath` / `@executable_path`。写死了就只能在构建机那个目录里跑 |
 | 整树包的文本文件里没有构建目录 | 例如编进去的 `GIT_EXEC_PATH`，Mach-O 检查看不见，换台机器就指向不存在的目录 |
+| `minos` 不超过该系统地板 | 忘了 `-mmacosx-version-min` 时 minos 就等于构建机的系统版本 —— `aria2c@1.37.0` 就是这么变成「声明支持 12、实际要求 15」的，而构建机上完全看不出来 |
 
 ```bash
 bash scripts/selfbuilt_check.sh out/bash-arm64 --arch arm64

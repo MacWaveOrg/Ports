@@ -38,6 +38,11 @@ FETCH="$HERE/../scripts/fetch.sh"
 [ -f "$FETCH" ] || die "fetch.sh not found: $FETCH"
 RELOCATE_SH="$HERE/../scripts/relocate_stage.sh"
 [ -f "$RELOCATE_SH" ] || die "relocate_stage.sh not found: $RELOCATE_SH"
+# 公共构建环境：地板 / -arch / -isysroot / -headerpad / 安装前缀。别自己再写一遍。
+BUILD_ENV="$HERE/../scripts/build-env.sh"
+[ -f "$BUILD_ENV" ] || die "build-env.sh not found: $BUILD_ENV"
+# shellcheck source=../scripts/build-env.sh
+source "$BUILD_ENV"
 
 for tool in git make clang lipo codesign vtool curl; do
     command -v "$tool" >/dev/null 2>&1 || die "$tool not found (install the Xcode command line tools)"
@@ -70,13 +75,16 @@ build_one() {
     mkdir -p "$dir"
     (
         cd "$dir"
+        # 地板、-arch、-isysroot、-headerpad 全部由 build-env.sh 给。
+        # 以前这里手写 "-arch x86_64 -O2"，漏了 -mmacosx-version-min，
+        # 于是 minos 跟着构建机走（Sequoia 上编出 15.0），声明支持 12 的包实际要 15。
+        mw_build_env "$arch"
+        export CFLAGS="$CFLAGS -O2" CXXFLAGS="$CXXFLAGS -O2"
         # BitTorrent 保留（那是 aria2 的主要用途之一，且不需要外部库）；
         # Metalink 会随 --without-libxml2/--without-libexpat 自动关闭。
         if [ "$arch" = "arm64" ]; then
             "$SRC/configure" --prefix="$dir/prefix" "${COMMON[@]}"
         else
-            CC=clang CXX=clang++ \
-            CFLAGS="-arch x86_64 -O2" CXXFLAGS="-arch x86_64 -O2" LDFLAGS="-arch x86_64 -Wl,-headerpad_max_install_names" \
             "$SRC/configure" --host=x86_64-apple-darwin --prefix="$dir/prefix" "${COMMON[@]}"
         fi
         make -j"$(sysctl -n hw.ncpu)"
