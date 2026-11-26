@@ -107,6 +107,21 @@ done
 
 [ -e "$TREE/lib/libncursesw.dylib" ] || die "wide-character library not installed"
 
+# ncurses 的 gen-pkgconfig 把 $(LDFLAGS) 整串抄进 .pc 的 `Libs:`，于是
+# `-arch arm64 -mmacosx-version-min=15.0 -isysroot /Applications/Xcode.app/...` 全会
+# 落到**别人机器上** —— 那串 SDK 路径是构建机的，链接参数也把下游钉死在同一个架构。
+# 这些是构建期的自用参数，用 pkg-config 的下游不该看见，装完就地删掉。
+# `ncursesw6-config` 同理。
+for f in "$TREE"/lib/pkgconfig/*.pc "$TREE"/bin/ncursesw*-config; do
+    # 上面补的 ncurses.pc 等是符号链接，sed -i 不认，跳过（内容与带 w 的那份相同）
+    [ -f "$f" ] || continue
+    [ -L "$f" ] && continue
+    sed -i '' -E 's/ -arch [a-zA-Z0-9_]+//g; s/ -mmacosx-version-min=[0-9.]+//g; s| -isysroot [^ "]+||g' "$f"
+done
+if grep -rqs -- "-isysroot" "$TREE/lib/pkgconfig"; then
+    die "build-only flags survived in the pkg-config files"
+fi
+
 say "${GREEN}🌊 Relocating and signing${RESET}"
 mw_relocate_stage "$STAGE_ROOT"
 
