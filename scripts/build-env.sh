@@ -39,8 +39,24 @@ MW_DEPLOYMENT_TARGET_X86_64="${MW_DEPLOYMENT_TARGET_X86_64:-12.0}"
 MW_PREFIX_ROOT="${MW_PREFIX_ROOT:-/opt/macwave}"
 
 MW_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MW_RELOCATE="$MW_SCRIPTS_DIR/relocate_rpath.py"
 MW_CHECK="$MW_SCRIPTS_DIR/selfbuilt_check.sh"
+
+# 客户端仓库的位置：relocate_rpath.py 与平台标签词表都只有一份，都在那边。
+# 1.0 起代码仓库叫 SummerwaveOrg/Summerwave；4.x 时代是 MacWaveOrg/MacWave。
+# 用 MACWAVE_CLIENT_REPO 覆盖（例如 CI 里 checkout 到别处）。
+MW_CLIENT_REPO="${MACWAVE_CLIENT_REPO:-}"
+if [[ -z "$MW_CLIENT_REPO" ]]; then
+    # scripts/ → Ports/ → MacWaveOrg/ → Projects/，所以是三级
+    for candidate in "$MW_SCRIPTS_DIR/../../../SummerwaveOrg/Summerwave" \
+                     "$MW_SCRIPTS_DIR/../../../MacWaveOrg/MacWave" \
+                     "$HOME/Projects/SummerwaveOrg/Summerwave"; do
+        if [[ -f "$candidate/scripts/relocate_rpath.py" ]]; then
+            MW_CLIENT_REPO="$(cd "$candidate" && pwd)"
+            break
+        fi
+    done
+fi
+MW_RELOCATE="${MW_CLIENT_REPO:-/nonexistent}/scripts/relocate_rpath.py"
 
 # -------------------- 输出 --------------------
 
@@ -131,6 +147,20 @@ mw_prefix() {
     echo "${MW_PREFIX_ROOT%/}/Shore/$name/$version"
 }
 
+mw_bottle_tag() {
+    # <os>-<arch>，例如 macos-arm64。词表只有一份，在客户端的 config/platforminfo.py；
+    # 这里调它，不自己拼 —— 两边漂了的话，产物名与索引记录名会对不上。
+    local arch="${1:-$(mw_host_arch)}"
+    [[ -n "$MW_CLIENT_REPO" ]] || mw_die "client repo not found; set MACWAVE_CLIENT_REPO"
+    python3 - "$MW_CLIENT_REPO" "$arch" <<'PY'
+import sys, pathlib
+repo, arch = pathlib.Path(sys.argv[1]), sys.argv[2]
+sys.path.insert(0, str(repo / "config"))
+import platforminfo
+print(platforminfo.bottle_tag(arch, os_name="macos"))
+PY
+}
+
 # -------------------- 收尾 --------------------
 
 mw_relocate_stage() {
@@ -158,6 +188,8 @@ if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
     echo "x86_64 target: $(mw_deployment_target x86_64)  clang -arch: $(mw_clang_arch x86_64)"
     echo "host arch:     $(mw_host_arch)"
     echo "prefix:        $(mw_prefix jq 1.8.2)"
+    echo "bottle tag:    $(mw_bottle_tag arm64) / $(mw_bottle_tag x86_64)"
+    echo "client repo:   ${MW_CLIENT_REPO:-（没找到，设 MACWAVE_CLIENT_REPO）}"
     echo "relocate:      $MW_RELOCATE"
     echo "check:         $MW_CHECK"
 fi
