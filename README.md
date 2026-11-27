@@ -3,10 +3,12 @@
 >
 > 1.0 起由 **Summerwave** 承接：<https://github.com/SummerwaveOrg/Summerwave>
 >
-> **没有对应仓 / No successor — 本仓仍在用，暂不归档。**
-> 1.0 的自建产物（上游不发 macOS 二进制的那批包）仍由本仓的构建脚本产出，
-> 并发布到 <https://github.com/SummerwaveOrg/Bottle>。索引记录里自建包的 `url:`
-> 也仍指向本仓的 Release，所以它必须保持可写。
+> **已并入主仓 / Merged into <https://github.com/SummerwaveOrg/Summerwave> 的 `build/ports/`**
+> recipe（`build.sh` + `notes.md` + `.patch`）与 7 个构建脚本搬到了那里，继续演进；
+> 1.0 起自建产物统一发布到 <https://github.com/SummerwaveOrg/Bottle>。
+>
+> 本仓的 Release 保留不动：索引记录里自建包的 `url:` 仍指向这里（1.0 不读它，但那是
+> 上游线索），审计与回滚也可能要拿。
 >
 > 归档不影响历史内容：代码、raw 文件、Release 资产与 Pages 站点仍可访问。
 > Archiving keeps everything readable: code, raw files, release assets and the Pages site.
