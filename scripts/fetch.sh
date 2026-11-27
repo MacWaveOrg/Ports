@@ -31,7 +31,9 @@ OUT="${2:-}"
 [ -n "$URL" ] && [ -n "$OUT" ] || die "usage: fetch.sh <url> <output>"
 
 curl_with_retry() {
-    curl -fsSL --retry 3 --retry-all-errors --retry-delay 2 \
+    # --http1.1 是这台机器上必需的：直连 github 走 HTTP/2 会报
+    # `curl: (16) Error in the HTTP2 framing layer`。
+    curl -fsSL --http1.1 --retry 3 --retry-all-errors --retry-delay 2 \
         --connect-timeout 20 --max-time 1800 -o "$OUT" "$1"
 }
 
@@ -46,6 +48,20 @@ case "$URL" in
         if command -v gh >/dev/null 2>&1; then
             say "${GREEN}🌊 gh api tarball ${owner}/${repo}@${ref}${RESET}"
             if gh api "repos/$owner/$repo/tarball/$ref" > "$OUT" 2>/dev/null && [ -s "$OUT" ]; then
+                exit 0
+            fi
+            say "🌊 fallback to plain curl (gh failed)"
+        fi
+        ;;
+    https://github.com/*/archive/refs/tags/*)
+        # 源码包（`<owner>/<repo>/archive/refs/tags/<tag>.tar.gz`）跟 codeload 是一回事：
+        # 直连 github.com 常年被掐，走 API 的 tarball 端点最稳。
+        rest="${URL#https://github.com/}"
+        owner="${rest%%/*}"; rest="${rest#*/}"
+        repo="${rest%%/*}"; tag="${rest#*/archive/refs/tags/}"; tag="${tag%%.tar.gz}"; tag="${tag%%.tar.xz}"
+        if command -v gh >/dev/null 2>&1; then
+            say "${GREEN}🌊 gh api tarball ${owner}/${repo}@${tag}${RESET}"
+            if gh api "repos/$owner/$repo/tarball/$tag" > "$OUT" 2>/dev/null && [ -s "$OUT" ]; then
                 exit 0
             fi
             say "🌊 fallback to plain curl (gh failed)"
